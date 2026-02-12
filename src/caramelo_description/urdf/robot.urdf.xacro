@@ -1,50 +1,20 @@
 <?xml version="1.0"?>
 <robot name="caramelo" xmlns:xacro="http://ros.org/wiki/xacro">
 
-  <!-- Propriedades -->
-  <xacro:property name="M_PI" value="3.1415926535897931" />
-
   <!-- Argumentos -->
   <xacro:arg name="robot_name" default="caramelo"/>
   <xacro:arg name="prefix" default=""/>
 
-  <!-- Inclusões -->
-  <xacro:include filename="common_properties.xacro" />
-  <xacro:include filename="mecanum_wheel.xacro" />
-  <xacro:include filename="lidar_sensor.xacro" />
-  <xacro:include filename="mobile_base.xacro" />
-  <xacro:include filename="mobile_base.ros2_control.xacro" />
+  <!-- Includes -->
+  <xacro:include filename="common_properties.xacro"/>
+  <xacro:include filename="lidar_sensor.xacro"/>
+  <xacro:include filename="mobile_base.xacro"/>
+  <xacro:include filename="mobile_base.ros2_control.xacro"/>
 
-  <!-- Base -->
-  <xacro:robot_base 
-    prefix="$(arg prefix)"/>
+  <!-- Base movel completa (base_link + footprint + 4 rodas) -->
+  <xacro:mobile_base prefix="$(arg prefix)"/>
 
-  <!-- Rodas mecanum -->
-  <xacro:mecanum_wheel
-    prefix="$(arg prefix)"
-    side="front_left"
-    x_reflect="1"
-    y_reflect="1"/>
-
-  <xacro:mecanum_wheel
-    prefix="$(arg prefix)"
-    side="front_right"
-    x_reflect="1"
-    y_reflect="-1"/>
-
-  <xacro:mecanum_wheel
-    prefix="$(arg prefix)"
-    side="back_left"
-    x_reflect="-1"
-    y_reflect="1"/>
-
-  <xacro:mecanum_wheel
-    prefix="$(arg prefix)"
-    side="back_right"
-    x_reflect="-1"
-    y_reflect="-1"/>
-
-  <!-- RPLidar S2 - Posicionado na face frontal do robô -->
+  <!-- Sensor lidar -->
   <xacro:lidar_sensor
     prefix="$(arg prefix)"
     parent="base_link"

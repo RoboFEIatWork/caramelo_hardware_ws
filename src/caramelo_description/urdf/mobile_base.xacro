@@ -1,65 +1,99 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- Propriedades da base do robô Caramelo -->
-  <xacro:property name="mass" value="22.0"/>
-  <xacro:property name="width_vertical" value="0.550"/>   <!-- Comprimento -->
-  <xacro:property name="depth_vertical" value="0.210"/>   <!-- Largura -->
-  <xacro:property name="width_horizontal" value="0.330"/>   <!-- Comprimento -->
-  <xacro:property name="depth_horizontal" value="0.320"/>   <!-- Largura -->
-  <xacro:property name="height" value="0.105"/>  <!-- Altura -->
-  <xacro:property name="wheel_radius" value="0.05"/>
+    <xacro:include filename="mecanum_wheel.xacro"/>
 
-  <xacro:macro name="robot_base" params="prefix">
-    <!-- Basefootprint link -->
+    <!-- Parametros especificos do robo Caramelo -->
+    <xacro:property name="base_mass" value="22.0"/>
+    <xacro:property name="base_height" value="0.105"/>
+    <xacro:property name="base_width_vertical" value="0.550"/>
+    <xacro:property name="base_depth_vertical" value="0.210"/>
+    <xacro:property name="base_width_horizontal" value="0.330"/>
+    <xacro:property name="base_depth_horizontal" value="0.320"/>
+
+    <xacro:property name="wheel_radius" value="0.05"/>
+    <xacro:property name="wheel_width" value="0.069"/>
+    <xacro:property name="wheel_mass" value="3.0"/>
+    <xacro:property name="wheel_separation" value="0.310"/>
+    <xacro:property name="wheel_base" value="0.470"/>
+
+    <!-- Base completa: footprint + base_link + 4 rodas mecanum -->
+    <xacro:macro name="mobile_base" params="prefix">
     <link name="${prefix}base_footprint"/>
 
-    <!-- Link da base (base_link agora toca o chão) -->
     <link name="${prefix}base_link">
+        <!-- Corpo principal em cruz (duas caixas visuais) -->
+        <visual>
+            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <geometry>
+                <box size="${base_width_vertical} ${base_depth_vertical} ${base_height}"/>
+            </geometry>
+            <material name="darkgray"/>
+        </visual>
+        <visual>
+            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <geometry>
+                <box size="${base_depth_horizontal} ${base_width_horizontal} ${base_height}"/>
+            </geometry>
+            <material name="darkgray"/>
+        </visual>
 
-      <visual>
-        <origin xyz="0 0 ${height/2.0}" rpy="0 0 0"/>
-        <geometry>
-          <box size="${width_vertical} ${depth_vertical} ${height}"/>
-        </geometry>
-        <material name="darkgray">
-          <color rgba="0.3 0.3 0.3 1.0"/>
-        </material>
-      </visual>
-      <visual>
-        <origin xyz="0 0 ${height/2.0}" rpy="0 0 0"/>
-        <geometry>
-          <box size="${depth_horizontal} ${width_horizontal} ${height}"/>
-        </geometry>
-        <material name="darkgray">
-          <color rgba="0.3 0.3 0.3 1.0"/>
-        </material>
-      </visual>
+        <!-- Colisao em cruz para casar com a geometria visual -->
+        <collision>
+            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <geometry>
+                <box size="${base_width_vertical} ${base_depth_vertical} ${base_height}"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <geometry>
+                <box size="${base_depth_horizontal} ${base_width_horizontal} ${base_height}"/>
+            </geometry>
+        </collision>
 
-      <collision>
-        <origin xyz="0 0 ${height/2.0}" rpy="0 0 0"/>
-        <geometry>
-          <box size="${width_vertical} ${depth_vertical} ${height}"/>
-        </geometry>
-      </collision>
+        <!-- Inercia aproximada por caixa envolvente da base -->
+        <xacro:box_inertia
+            m="${base_mass}"
+            x="${base_width_vertical}"
+            y="${base_width_horizontal}"
+            z="${base_height}"
+            o_xyz="0 0 ${base_height/2.0}"
+            o_rpy="0 0 0"/>
 
-      <inertial>
-        <mass value="${mass}"/>
-        <origin xyz="0 0 ${height/2.0}" rpy="0 0 0"/>
-        <inertia
-          ixx="${1/12.0 * mass * (height*height + depth_vertical*depth_vertical)}"
-          iyy="${1/12.0 * mass * (width_vertical*width_vertical + depth_vertical*depth_vertical)}"
-          izz="${1/12.0 * mass * (width_vertical*width_vertical + height*height)}"
-          ixy="0.0" ixz="0.0" iyz="0.0"/>
-      </inertial>
     </link>
 
-    <!-- Joint com o footprint (ajustado para as dimensões do Caramelo) -->
+    <!-- Base apoiada nas rodas -->
     <joint name="${prefix}base_joint" type="fixed">
-      <parent link="${prefix}base_footprint"/>
-      <child link="${prefix}base_link"/>
-      <origin xyz="0 0 ${wheel_radius - 0.02}" rpy="0 0 0"/>
+        <parent link="${prefix}base_footprint"/>
+        <child link="${prefix}base_link"/>
+        <origin xyz="0 0 ${wheel_radius - 0.02}" rpy="0 0 0"/>
     </joint>
+
+    <!-- Quatro rodas mecanum -->
+    <xacro:mecanum_wheel 
+        prefix="${prefix}" 
+        side="front_left" 
+        x_reflect="1" 
+        y_reflect="1"/>
+
+    <xacro:mecanum_wheel 
+        prefix="${prefix}" 
+        side="front_right" 
+        x_reflect="1" 
+        y_reflect="-1"/>
+
+    <xacro:mecanum_wheel 
+        prefix="${prefix}" 
+        side="back_left" 
+        x_reflect="-1" 
+        y_reflect="1"/>
+
+    <xacro:mecanum_wheel 
+        prefix="${prefix}" 
+        side="back_right" 
+        x_reflect="-1" 
+        y_reflect="-1"/>
 
   </xacro:macro>
 

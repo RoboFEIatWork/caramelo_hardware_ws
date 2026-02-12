@@ -1,8 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <xacro:property name="M_PI" value="3.1415926535897931" />
-
     <xacro:macro name="lidar_sensor" params="
         prefix:=''
         parent:='base_link'
@@ -36,10 +34,6 @@
         visualize:=false
         enable_collision:=false">
 
-        <xacro:property name="radius" value="${lidar_width/2}" />
-        <xacro:property name="ixx_iyy" value="${(mass/12) * (3 * radius * radius + lidar_height * lidar_height)}" />
-        <xacro:property name="izz" value="${(mass/2) * (radius * radius)}" />
-
         <link name="${prefix}${frame_id}">
         <visual>
             <origin xyz="${mesh_xyz_offset}" rpy="${mesh_rpy_offset}"/>
@@ -60,17 +54,12 @@
             </collision>
         </xacro:if>
 
-        <inertial>
-            <mass value="${mass}" />
-            <origin xyz="${inertial_xyz_offset}" rpy="${inertial_rpy_offset}"/>
-            <inertia
-            ixx="${ixx_iyy}"
-            ixy="0.0"
-            ixz="0.0"
-            iyy="${ixx_iyy}"
-            iyz="0.0"
-            izz="${izz}" />
-        </inertial>
+        <xacro:cylinder_inertia
+            m="${mass}"
+            r="${lidar_width/2}"
+            l="${lidar_height}"
+            o_xyz="${inertial_xyz_offset}"
+            o_rpy="${inertial_rpy_offset}"/>
         </link>
 
         <joint name="${prefix}${frame_id}_joint" type="fixed">
