@@ -1,0 +1,13 @@
+# ROS 2 / colcon workspace outputs
+build/
+install/
+log/
+
+# IDEs/editors
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
