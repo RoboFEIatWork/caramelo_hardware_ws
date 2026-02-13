@@ -1,0 +1,9 @@
+<library path="caramelo_hardware">
+    <class  name="mobile_base_hardware/MobileBaseHWInterface" 
+            type="mobile_base_hardware::MobileBaseHWInterface"
+            base_class_type="hardware_interface::SystemInterface">
+        <description>
+            This is the hardware interface for the mobile base of the robot.
+        </description>
+    </class>
+</library>
