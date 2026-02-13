@@ -5,10 +5,10 @@
         <hardware>
             <!--* Qual o plugin de hardware a ser utilizado? -->
             <!--* Mock components: Somente para simulação -->
-            <!-- <plugin>mock_components/GenericSystem</plugin> -->
+            <plugin>mock_components/GenericSystem</plugin>
 
             <!--* Mobile base hardware interface: Para controle real do robô -->
-            <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin>
+            <!-- <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin> -->
             <!-- <param name=""></param>
             <param name=""></param>
             <param name=""></param>
@@ -17,26 +17,26 @@
 
         <!-- Criar uma joint tag para cada junta que desejar que seja controlada -->
         <!-- O nome da junta aqui deve corresponder ao nome da junta no URDF -->
-        <joint name="front_left_wheel_link"> <!--* Roda dianteira esquerda -->
+        <joint name="front_left_wheel_joint"> <!--* Roda dianteira esquerda -->
             <!-- Especificar as interfaces de comando e estado para a junta direita -->
             <command_interface name="velocity" />   <!-- Interface de comando para velocidade (O que o controle espera de entrada)-->
             <state_interface name="position" />     <!-- Interface de estado para posição (O que o hardware reporta como saída)-->
             <state_interface name="velocity" />
         </joint>
 
-        <joint name="front_right_wheel_link"> <!--* Roda dianteira direita -->
+        <joint name="front_right_wheel_joint"> <!--* Roda dianteira direita -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
 
-        <joint name="back_felt_wheel_link"> <!--* Roda traseira esquerda -->
+        <joint name="back_left_wheel_joint"> <!--* Roda traseira esquerda -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
 
-        <joint name="back_right_wheel_link"> <!--* Roda traseira direita -->
+        <joint name="back_right_wheel_joint"> <!--* Roda traseira direita -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
