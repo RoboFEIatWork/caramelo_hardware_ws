@@ -9,10 +9,13 @@
 
             <!--* Mobile base hardware interface: Para controle real do robô -->
             <!-- <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin> -->
-            <!-- <param name=""></param>
-            <param name=""></param>
-            <param name=""></param>
-            <param name=""></param> -->
+            <param name="pigpio_host">localhost</param>
+            <param name="pigpio_port">8888</param>
+            <param name="pwm_frequency_hz">500</param>
+            <param name="pwm_range">255</param>
+            <param name="encoder_counts_per_wheel_rev">28672</param>
+            <param name="encoder_glitch_filter_us">1</param>
+            <param name="max_wheel_rad_per_sec">10.0</param>
         </hardware>
 
         <!-- Criar uma joint tag para cada junta que desejar que seja controlada -->
@@ -22,24 +25,48 @@
             <command_interface name="velocity" />   <!-- Interface de comando para velocidade (O que o controle espera de entrada)-->
             <state_interface name="position" />     <!-- Interface de estado para posição (O que o hardware reporta como saída)-->
             <state_interface name="velocity" />
+            <param name="pwm_gpio">18</param>
+            <param name="dir_gpio">-1</param>
+            <param name="enc_a_gpio">5</param>
+            <param name="enc_b_gpio">6</param>
+            <param name="command_sign">1.0</param>
+            <param name="feedback_sign">1.0</param>
         </joint>
 
         <joint name="front_right_wheel_joint"> <!--* Roda dianteira direita -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
+            <param name="pwm_gpio">23</param>
+            <param name="dir_gpio">-1</param>
+            <param name="enc_a_gpio">12</param>
+            <param name="enc_b_gpio">13</param>
+            <param name="command_sign">1.0</param>
+            <param name="feedback_sign">1.0</param>
         </joint>
 
         <joint name="back_left_wheel_joint"> <!--* Roda traseira esquerda -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
+            <param name="pwm_gpio">24</param>
+            <param name="dir_gpio">-1</param>
+            <param name="enc_a_gpio">16</param>
+            <param name="enc_b_gpio">19</param>
+            <param name="command_sign">1.0</param>
+            <param name="feedback_sign">1.0</param>
         </joint>
 
         <joint name="back_right_wheel_joint"> <!--* Roda traseira direita -->
             <command_interface name="velocity" />
             <state_interface name="position" />
             <state_interface name="velocity" />
+            <param name="pwm_gpio">25</param>
+            <param name="dir_gpio">-1</param>
+            <param name="enc_a_gpio">20</param>
+            <param name="enc_b_gpio">21</param>
+            <param name="command_sign">1.0</param>
+            <param name="feedback_sign">1.0</param>
         </joint>
 
     </ros2_control>

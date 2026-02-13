@@ -1,0 +1,9 @@
+<library path="caramelo_hardware">
+  <class
+    name="mobile_base_hardware/MobileBaseHWInterface"
+    type="mobile_base_hardware::MobileBaseHWInterface"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>ROS 2 control hardware interface for 4 Maxon motors via Raspberry Pi GPIO.</description>
+  </class>
+</library>
+
