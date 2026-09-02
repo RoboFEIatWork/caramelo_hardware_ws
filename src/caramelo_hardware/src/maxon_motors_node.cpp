@@ -63,6 +63,81 @@ MaxonMotorsNode::~MaxonMotorsNode()
 	shutdown_hardware();
 }
 
+
+bool MaxonMotorsNode::verificar_arme()
+{
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// A amostragem ainda nao subiu neste ponto (a thread comeca depois), entao a
+	// verificacao le o RIO direto, com o mesmo decodificador.
+	std::array<caramelo::ChannelMap, kMaxWheels> canais{};
+	for (std::size_t i = 0; i < motors_.size() && i < kMaxWheels; ++i) {
+		canais[i].a_bit = static_cast<uint8_t>(motors_[i].config.enc_a_gpio);
+		canais[i].b_bit = static_cast<uint8_t>(motors_[i].config.enc_b_gpio);
+		canais[i].sign = 1;
+	}
+
+	// Limiar: 0,05 volta de roda. Bem acima do ruido (o repouso mede +-1 count)
+	// e bem abaixo de qualquer arranque de verdade, que passa de 1 volta.
+	const int64_t kLimiteCounts =
+		static_cast<int64_t>(0.05 * std::max(1.0, driver_config_.encoder_counts_per_wheel_rev));
+
+	for (int tentativa = 1; tentativa <= 3; ++tentativa) {
+		caramelo::QuadratureDecoder<kMaxWheels> dec(
+			canais, static_cast<uint32_t>(std::max(1, driver_config_.encoder_stable_samples)));
+		dec.reset(rio_.read_in());
+
+		// Janela de observacao: 400 ms sao 20 periodos de servo, tempo de sobra
+		// para uma roda que arrancou acumular muito mais que o limiar.
+		uint32_t buf[kSamplerBurst];
+		const int64_t fim = steady_now_ns() + 400000000LL;
+		while (steady_now_ns() < fim) {
+			for (int rep = 0; rep < 16; ++rep) {
+				rio_.read_burst(buf);
+				for (std::size_t k = 0; k < kSamplerBurst; ++k) { dec.update(buf[k]); }
+			}
+		}
+
+		bool alguma_girando = false;
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			const int64_t giro = dec.count(i) < 0 ? -dec.count(i) : dec.count(i);
+			if (giro > kLimiteCounts) {
+				alguma_girando = true;
+				RCLCPP_ERROR(
+					get_logger(),
+					"ARME (tentativa %d): roda %zu (GPIO %d) girou %.3f volta SEM COMANDO.",
+					tentativa, i, motors_[i].config.pwm_gpio,
+					static_cast<double>(dec.count(i)) /
+						std::max(1.0, driver_config_.encoder_counts_per_wheel_rev));
+			}
+		}
+
+		if (!alguma_girando) {
+			if (tentativa > 1) {
+				RCLCPP_WARN(get_logger(), "ARME: estabilizou na tentativa %d.", tentativa);
+			}
+			return true;
+		}
+
+		// Corta os pulsos: com o firmware novo, Ton=0 PARA o motor, e cortar nao
+		// tem o risco de truncar que reprogramar tem. Depois re-arma do zero.
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			lgTxServo(
+				chip_handle_.load(), motors_[i].config.pwm_gpio, 0,
+				kServoFrequencyHz, servo_offset_us(i), 0);
+			motors_[i].last_pulse_us.store(-1, std::memory_order_relaxed);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(600));
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			send_servo_pulse(i, neutral_pulse_width_us(), true);
+			std::this_thread::sleep_for(std::chrono::milliseconds(25));
+		}
+	}
+	return false;
+#else
+	return true;
+#endif
+}
+
 bool MaxonMotorsNode::initialize(
 	const MaxonDriverConfig & driver_config,
 	const std::vector<MaxonMotorConfig> & motor_configs)
@@ -222,6 +297,31 @@ bool MaxonMotorsNode::initialize(
 			rio_.configure_input(static_cast<unsigned>(motor.config.enc_a_gpio), true, true);
 			rio_.configure_input(static_cast<unsigned>(motor.config.enc_b_gpio), true, true);
 		}
+	}
+
+	// ARME VERIFICADO: confere se alguma roda saiu girando sozinha e corrige.
+	//
+	// POR QUE: iniciar o trem de pulsos exige chamar lgTxServo, e essa chamada
+	// cancela e reinicia o trem. Se ela cair DENTRO do pulso alto, trunca o Ton,
+	// e pulso truncado cai na banda de RE do firmware, que arma re sem tempo de
+	// armacao (ver send_servo_pulse). Nao da' para arrancar o trem sem essa
+	// chamada, entao o risco e' inevitavel — o que da' para fazer e' VERIFICAR.
+	//
+	// Medido em 2026-09-02, com as rodas suspensas: em 12 subidas do bringup,
+	// 2 tiveram roda girando sozinha, uma delas 2,4 voltas, e numa outra a roda
+	// ainda girava a 2,4 rad/s (o piso do ESC) quando medida. No chao isso e' o
+	// robo saindo andando ao ligar.
+	//
+	// A verificacao so' existe aqui, na inicializacao: em operacao normal roda
+	// girando sem comando e' o robo sendo ARRASTADO A MAO, que e' um caso de uso
+	// legitimo e nao pode ser confundido com falha.
+	if (!verificar_arme()) {
+		RCLCPP_FATAL(
+			get_logger(),
+			"Nao consegui armar os ESCs em estado parado. RECUSANDO iniciar: subir "
+			"assim significaria entregar o robo com roda girando sozinha.");
+		shutdown_hardware();
+		return false;
 	}
 
 	diag_msg_.data.assign(motors_.size(), 0.0);

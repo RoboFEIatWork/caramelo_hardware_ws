@@ -245,6 +245,9 @@ private:
 	/// o instantaneo por seqlock. Roda em SCHED_FIFO alto, idealmente num core
 	/// isolado. Nao faz syscall, nao aloca, nao pega lock.
 	void sampler_loop();
+	/// Confere, apos armar, se alguma roda saiu girando sozinha; corta os pulsos
+	/// e re-arma ate 3 vezes. False = nao consegui deixar o robo parado.
+	bool verificar_arme();
 	void update_cycle();
 	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
 	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
