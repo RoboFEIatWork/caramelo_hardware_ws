@@ -491,11 +491,8 @@ int mode_pulse_sweep(
 		if (alvo_roda >= 0 && static_cast<int>(w) != alvo_roda) { continue; }
 		if (g_stop.load(std::memory_order_relaxed)) { break; }
 		const int pino = static_cast<int>(kPwm[w].a_gpio);
-		std::printf("
-===== %s (PWM GPIO %d) =====
-", kPwm[w].name, pino);
-		std::printf("%8s %12s %12s %10s
-", "pulso_us", "rad/s", "counts", "diafonia");
+		std::printf("\n===== %s (PWM GPIO %d) =====\n", kPwm[w].name, pino);
+		std::printf("%8s %12s %12s %10s\n", "pulso_us", "rad/s", "counts", "diafonia");
 
 		for (int ramo = 0; ramo < 2; ++ramo) {
 			const int * pulsos = (ramo == 0) ? kPulsosFrente : kPulsosRe;
@@ -520,8 +517,7 @@ int mode_pulse_sweep(
 						static_cast<double>(dec.count(i) - antes[i]) * rad_por_count / dt);
 					if (outra > diafonia) { diafonia = outra; }
 				}
-				std::printf("%8d %12.4f %12lld %10.4f
-",
+				std::printf("%8d %12.4f %12lld %10.4f\n",
 					pulso, static_cast<double>(d) * rad_por_count / dt,
 					static_cast<long long>(d), diafonia);
 				std::fflush(stdout);
@@ -533,11 +529,8 @@ int mode_pulse_sweep(
 			}
 		}
 	}
-	std::printf("
-A coluna diafonia deve ficar ~0: e' a maior velocidade vista nas
-"
-		"rodas que NAO foram comandadas naquele ponto.
-");
+	std::printf("\nA coluna diafonia deve ficar ~0: e' a maior velocidade vista nas\n"
+		"rodas que NAO foram comandadas naquele ponto.\n");
 	return 0;
 }
 
@@ -548,6 +541,9 @@ void usage()
 		"  --info           estado de pad/funcao/nivel das 8 linhas de encoder\n"
 		"  --edges SEG      bordas cruas por linha (mede chilrear e ringing)\n"
 		"  --count SEG      contagem em quadratura x4 por roda\n"
+		"  --pulse-sweep    mede a curva REAL pulso -> velocidade de cada placa\n"
+		"  --wheel fl|fr|bl|br|all   restringe a varredura a uma roda\n"
+		"  --dwell S        janela de medicao por ponto (default 2.0)\n"
 		"  --hold-neutral   segura 1500 us nos 4 ESCs enquanto mede (silencia o\n"
 		"                   alarme das placas energizadas; estado seguro)\n"
 		"  --chip N         forca o gpiochip do PWM em vez de detectar pelo label\n"
@@ -569,6 +565,7 @@ int main(int argc, char ** argv)
 	int cpu = -1;
 	int chip = -1;
 	bool do_nudge = false;
+	bool do_sweep = false;
 	int nudge_us = 1590;
 	int roda = -1;
 	double dwell = 2.0;
@@ -588,9 +585,16 @@ int main(int argc, char ** argv)
 		else if (a == "--nudge") { do_nudge = true; hold_neutral = true; }
 		else if (a == "--nudge-us" && i + 1 < argc) { nudge_us = std::atoi(argv[++i]); }
 		else if (a == "--nudge-s" && i + 1 < argc) { nudge_s = std::atof(argv[++i]); }
+		else if (a == "--pulse-sweep") { do_sweep = true; hold_neutral = true; }
+		else if (a == "--dwell" && i + 1 < argc) { dwell = std::atof(argv[++i]); }
+		else if (a == "--wheel" && i + 1 < argc) {
+			const std::string r = argv[++i];
+			roda = (r == "fl") ? 0 : (r == "fr") ? 1 : (r == "bl") ? 2 : (r == "br") ? 3 : -1;
+			if (roda < 0 && r != "all") { std::fprintf(stderr, "roda invalida: %s\n", r.c_str()); return 2; }
+		}
 		else { usage(); return 2; }
 	}
-	if (mode == Mode::None && !do_nudge) { usage(); return 2; }
+	if (mode == Mode::None && !do_nudge && !do_sweep) { usage(); return 2; }
 
 	if (ros2_control_is_running()) {
 		std::fprintf(stderr,
@@ -634,6 +638,7 @@ int main(int argc, char ** argv)
 	// A cutucada vem ANTES do modo escolhido: ela destrava os eixos, entao um
 	// --count logo em seguida ja encontra as rodas livres para girar a mao.
 	if (do_nudge) { rc = mode_nudge(rio, nudge_us, nudge_s); }
+	if (do_sweep) { rc = mode_pulse_sweep(rio, roda, dwell, 1.5); }
 #endif
 	switch (mode) {
 		case Mode::Info: rc = mode_info(rio); break;
