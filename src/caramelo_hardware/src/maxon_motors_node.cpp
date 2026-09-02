@@ -663,6 +663,19 @@ void MaxonMotorsNode::update_cycle()
 			cmd_signed, motor.moving.load(std::memory_order_relaxed),
 			static_cast<int>(std::lround(motor.config.pulse_offset_us)));
 		motor.moving.store(pulse_us != neutral_pulse_width_us(), std::memory_order_relaxed);
+		// Rastro do mapa comando -> pulso, 1 Hz, so' com comando ativo. Sem isto
+		// a unica forma de saber qual RAMO (frente ou re) cada roda esta usando
+		// e' deduzir da cadeia command_sign/feedback_sign — e deduzir errado ja
+		// custou uma tentativa de calibracao inteira.
+		if (pulse_us != neutral_pulse_width_us()) {
+			RCLCPP_INFO_THROTTLE(
+				get_logger(), *get_clock(), 1000,
+				"motor %zu GPIO%d: cmd=%+.3f rad/s  command_sign=%+.0f  cmd_signed=%+.3f  "
+				"ramo=%s  pulso=%d us",
+				i, motor.config.pwm_gpio, motor.command_rad_s.load(),
+				motor.config.command_sign, cmd_signed,
+				(cmd_signed > 0.0) ? "FRENTE" : "RE", pulse_us);
+		}
 		send_servo_pulse(i, pulse_us, false);
 	}
 
