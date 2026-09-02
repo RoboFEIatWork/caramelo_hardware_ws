@@ -395,8 +395,18 @@ void MaxonMotorsNode::stop_all_motors_locked()
 
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		motors_[i].command_rad_s.store(0.0);
-		motors_[i].moving = false;
-		send_servo_pulse(i, neutral_pulse_width_us(), true);
+		motors_[i].moving.store(false, std::memory_order_relaxed);
+		// force = FALSE de proposito. Reprogramar o lgTxServo cancela e reinicia
+		// o trem: se a chamada cair DENTRO do pulso alto, ela trunca o Ton, e
+		// pulso truncado cai na banda de RE do firmware, que arma re sem tempo de
+		// armacao (ver comentario em send_servo_pulse). Se o canal JA esta em
+		// neutro, reprogramar nao melhora nada e so' expoe a esse risco.
+		//
+		// Medido em 2026-09-02: com force=true aqui, subidas do bringup faziam
+		// rodas girarem sozinhas ate 0,86 volta, e numa delas a roda ainda estava
+		// girando a 2,4 rad/s (o piso do ESC) no momento da medicao — ou seja, o
+		// proprio "parar" era o que mandava andar.
+		send_servo_pulse(i, neutral_pulse_width_us(), false);
 	}
 #endif
 }
