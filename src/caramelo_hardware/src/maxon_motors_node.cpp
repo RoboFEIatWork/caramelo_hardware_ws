@@ -86,10 +86,17 @@ bool MaxonMotorsNode::verificar_arme()
 			canais, static_cast<uint32_t>(std::max(1, driver_config_.encoder_stable_samples)));
 		dec.reset(rio_.read_in());
 
-		// Janela de observacao: 400 ms sao 20 periodos de servo, tempo de sobra
-		// para uma roda que arrancou acumular muito mais que o limiar.
+		// Janela de observacao: 3 s.
+		//
+		// 400 ms NAO bastavam, e o motivo importa: o ESC nao reage na hora ao
+		// pulso ruim. Medido em 10 subidas com janela de 400 ms, 2 ainda tiveram
+		// roda disparando, e o verificador nao viu nada — o disparo acontecia
+		// DEPOIS da janela. O firmware tem tempo de armacao proprio, entao entre
+		// receber o pulso truncado e comecar a girar passa mais de meio segundo.
+		// A janela precisa cobrir esse atraso, senao ela certifica um robo que vai
+		// sair andando logo em seguida.
 		uint32_t buf[kSamplerBurst];
-		const int64_t fim = steady_now_ns() + 400000000LL;
+		const int64_t fim = steady_now_ns() + 3000000000LL;
 		while (steady_now_ns() < fim) {
 			for (int rep = 0; rep < 16; ++rep) {
 				rio_.read_burst(buf);
