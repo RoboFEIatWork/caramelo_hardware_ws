@@ -71,6 +71,7 @@ constexpr WheelPins kPins[kWheels] = {
 // nominal "28:1" tambem e' suspeita: redutor planetario costuma ter razao
 // fracionaria. O teste mede o PRODUTO, que e' a constante que o software usa.
 constexpr double kCountsPerWheelRevX4 = 1024.0 * 28.0 * 4.0;
+constexpr double kTwoPiLocal = 6.28318530717958647692;
 
 // Linhas de PWM dos 4 ESCs. So' sao tocadas no modo --hold-neutral.
 constexpr WheelPins kPwm[kWheels] = {
@@ -439,6 +440,107 @@ int mode_nudge(caramelo::Rp1Rio & rio, int pulse_us, double hold_s)
 }
 #endif  // CARAMELO_HAS_LGPIO
 
+
+/// Varredura de PULSOS: mede a curva real pulso -> velocidade de cada placa.
+///
+/// POR QUE ISTO EXISTE: o driver assume uma reta afim unica para as quatro
+/// rodas (piso em 1570 us = 2.43 rad/s, escala cheia em 2000 us = 20.06 rad/s).
+/// Medindo, as rodas da direita entregam ~6% menos velocidade que as da
+/// esquerda com o MESMO pulso. Tentar corrigir isso inferindo um deslocamento a
+/// partir da reta assumida FALHOU em 2026-09-01 — piorou a assimetria para 24%,
+/// porque a resposta real a um degrau de pulso nao bateu com a inclinacao da
+/// reta. Ou seja: a reta esta errada, e nao adianta corrigir parametros dela.
+///
+/// Aqui nao se assume nada: comanda-se um pulso EXPLICITO e mede-se o que sai.
+/// O resultado e' a curva de cada placa, de onde saem piso e inclinacao reais.
+///
+/// Uma roda por vez; as outras tres ficam em neutro e sao observadas junto,
+/// para flagrar diafonia.
+int mode_pulse_sweep(
+	caramelo::Rp1Rio & rio, int alvo_roda, double dwell_s, double settle_s)
+{
+	std::array<caramelo::ChannelMap, kWheels> chans{};
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		chans[i].a_bit = static_cast<uint8_t>(kPins[i].a_gpio);
+		chans[i].b_bit = static_cast<uint8_t>(kPins[i].b_gpio);
+		// -1 alinha o decodificador com o ESPACO DE PULSO: pulso de frente passa
+		// a contar positivo, que e' como a tabela abaixo fica legivel.
+		chans[i].sign = -1;
+	}
+	caramelo::QuadratureDecoder<kWheels> dec(chans, g_stable);
+	dec.reset(rio.read_in());
+
+	constexpr std::size_t kBurst = 16;
+	uint32_t buf[kBurst];
+	auto amostrar_ate = [&](uint64_t t_fim) {
+		while (now_ns() < t_fim && !g_stop.load(std::memory_order_relaxed)) {
+			for (int rep = 0; rep < 16; ++rep) {
+				rio.read_burst(buf);
+				for (std::size_t i = 0; i < kBurst; ++i) { dec.update(buf[i]); }
+			}
+		}
+	};
+
+	// Pontos escolhidos para cobrir a faixa util sem gastar bateria a toa.
+	// Frente: acima do limiar de arme (1540) com margem. Re: espelhado.
+	static const int kPulsosFrente[] = {1580, 1600, 1630, 1660, 1700, 1750, 1800};
+	static const int kPulsosRe[]     = {1420, 1400, 1370, 1340, 1300, 1250, 1200};
+	const double rad_por_count = kTwoPiLocal / kCountsPerWheelRevX4;
+
+	for (std::size_t w = 0; w < kWheels; ++w) {
+		if (alvo_roda >= 0 && static_cast<int>(w) != alvo_roda) { continue; }
+		if (g_stop.load(std::memory_order_relaxed)) { break; }
+		const int pino = static_cast<int>(kPwm[w].a_gpio);
+		std::printf("
+===== %s (PWM GPIO %d) =====
+", kPwm[w].name, pino);
+		std::printf("%8s %12s %12s %10s
+", "pulso_us", "rad/s", "counts", "diafonia");
+
+		for (int ramo = 0; ramo < 2; ++ramo) {
+			const int * pulsos = (ramo == 0) ? kPulsosFrente : kPulsosRe;
+			for (int k = 0; k < 7 && !g_stop.load(std::memory_order_relaxed); ++k) {
+				const int pulso = pulsos[k];
+				lgTxServo(g_chip, pino, pulso, kServoHz, static_cast<int>(w) * 5000, 0);
+				// Deixa o ESC estabilizar antes de medir (a rampa dele e' ~50 ms,
+				// mas o laco de velocidade leva mais para assentar).
+				amostrar_ate(now_ns() + static_cast<uint64_t>(settle_s * 1e9));
+
+				int64_t antes[kWheels];
+				for (std::size_t i = 0; i < kWheels; ++i) { antes[i] = dec.count(i); }
+				const uint64_t t0 = now_ns();
+				amostrar_ate(t0 + static_cast<uint64_t>(dwell_s * 1e9));
+				const double dt = static_cast<double>(now_ns() - t0) * 1e-9;
+
+				const int64_t d = dec.count(w) - antes[w];
+				double diafonia = 0.0;
+				for (std::size_t i = 0; i < kWheels; ++i) {
+					if (i == w) { continue; }
+					const double outra = std::fabs(
+						static_cast<double>(dec.count(i) - antes[i]) * rad_por_count / dt);
+					if (outra > diafonia) { diafonia = outra; }
+				}
+				std::printf("%8d %12.4f %12lld %10.4f
+",
+					pulso, static_cast<double>(d) * rad_por_count / dt,
+					static_cast<long long>(d), diafonia);
+				std::fflush(stdout);
+
+				// Volta a neutro entre pontos: nao acumula calor nem deixa a
+				// roda girando enquanto o proximo ponto e' preparado.
+				lgTxServo(g_chip, pino, kNeutroUs, kServoHz, static_cast<int>(w) * 5000, 0);
+				amostrar_ate(now_ns() + 1200000000ull);
+			}
+		}
+	}
+	std::printf("
+A coluna diafonia deve ficar ~0: e' a maior velocidade vista nas
+"
+		"rodas que NAO foram comandadas naquele ponto.
+");
+	return 0;
+}
+
 void usage()
 {
 	std::printf(
@@ -468,6 +570,8 @@ int main(int argc, char ** argv)
 	int chip = -1;
 	bool do_nudge = false;
 	int nudge_us = 1590;
+	int roda = -1;
+	double dwell = 2.0;
 	double nudge_s = 0.4;
 
 	for (int i = 1; i < argc; ++i) {
