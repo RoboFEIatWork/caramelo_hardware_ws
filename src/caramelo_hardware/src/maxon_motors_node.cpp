@@ -804,7 +804,10 @@ void MaxonMotorsNode::guarda_de_partida()
 		const bool neutro =
 			motors_[i].last_pulse_us.load(std::memory_order_relaxed) == neutral_pulse_width_us();
 		const double v = motors_[i].velocity_rad_s.load();
-		if (!neutro || std::fabs(v) < 0.5) {
+		// 0,25 rad/s: bem acima do ruido (o repouso mede +-1 count) e baixo o
+		// bastante para pegar o disparo antes de o motor chegar ao piso de
+		// 2,43 rad/s, cortando ainda na rampa.
+		if (!neutro || std::fabs(v) < 0.25) {
 			continue;
 		}
 		// Disparo: pulso neutro e roda girando acima do ruido.
@@ -829,7 +832,11 @@ void MaxonMotorsNode::guarda_de_partida()
 				"marcando o driver como morto — melhor um robo parado que um solto.");
 			return;
 		}
-		guarda_rearme_ns_ = agora + 800000000LL;   // 800 ms com o motor parado
+		// 1,5 s com os pulsos cortados antes de re-armar. 800 ms nao bastavam: o
+		// firmware leva ~500 ms para parar o motor depois da perda de sinal
+		// (TURNOFF_TIME_MAX), entao re-armar cedo pegava o ESC ainda girando e
+		// encadeava novo disparo — medido, 3 disparos seguidos numa subida.
+		guarda_rearme_ns_ = agora + 1500000000LL;
 		return;
 	}
 #endif
