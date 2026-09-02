@@ -112,6 +112,7 @@ bool MaxonMotorsNode::verificar_arme()
 		}
 
 		if (!alguma_girando) {
+			RCLCPP_INFO(get_logger(), "ARME: as 4 rodas paradas (tentativa %d).", tentativa);
 			if (tentativa > 1) {
 				RCLCPP_WARN(get_logger(), "ARME: estabilizou na tentativa %d.", tentativa);
 			}
@@ -315,6 +316,7 @@ bool MaxonMotorsNode::initialize(
 	// A verificacao so' existe aqui, na inicializacao: em operacao normal roda
 	// girando sem comando e' o robo sendo ARRASTADO A MAO, que e' um caso de uso
 	// legitimo e nao pode ser confundido com falha.
+	RCLCPP_INFO(get_logger(), "ARME: verificando se alguma roda saiu girando...");
 	if (!verificar_arme()) {
 		RCLCPP_FATAL(
 			get_logger(),
@@ -453,6 +455,13 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 	if (!force && motor.last_pulse_us.load(std::memory_order_relaxed) == pulse_us) {
 		return true;
 	}
+	// Toda reprogramacao e' um evento de RISCO (pode truncar o Ton e virar re),
+	// entao nenhuma pode acontecer sem rastro. Sem isto, uma chamada vinda de um
+	// caminho inesperado e' invisivel.
+	RCLCPP_INFO(
+		get_logger(), "lgTxServo REPROGRAMA GPIO%d: %d -> %d us (force=%d)",
+		motor.config.pwm_gpio, motor.last_pulse_us.load(std::memory_order_relaxed),
+		pulse_us, force ? 1 : 0);
 	const int rc = lgTxServo(
 		chip_handle_.load(), motor.config.pwm_gpio, pulse_us,
 		kServoFrequencyHz, servo_offset_us(motor_index), 0);
