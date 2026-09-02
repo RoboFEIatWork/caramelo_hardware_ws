@@ -248,6 +248,10 @@ private:
 	/// Confere, apos armar, se alguma roda saiu girando sozinha; corta os pulsos
 	/// e re-arma ate 3 vezes. False = nao consegui deixar o robo parado.
 	bool verificar_arme();
+	/// Guarda de partida: durante os primeiros segundos de vida do driver, roda
+	/// girando com pulso NEUTRO e' disparo do ESC. Corta os pulsos e re-arma.
+	/// Roda dentro do update_cycle, entao nao bloqueia — e' maquina de estados.
+	void guarda_de_partida();
 	void update_cycle();
 	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
 	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
@@ -280,6 +284,11 @@ private:
 	mutable std::atomic<uint32_t> snap_seq_{0};
 	EncoderSnapshot snap_{};
 	std::atomic<int> health_{0};
+	// Guarda de partida (so' a thread de controle toca nestes).
+	int64_t partida_ns_ = 0;          ///< instante em que o driver terminou de armar
+	int64_t guarda_rearme_ns_ = 0;    ///< 0 = nao ha re-arme pendente
+	int guarda_tentativas_ = 0;
+	bool guarda_ativa_ = true;
 	// Mensagem de diagnostico pre-dimensionada: publicar a 100 Hz alocando um
 	// Float64MultiArray por ciclo era ~100 malloc/s dentro da thread que roda
 	// com chrt -f 50.

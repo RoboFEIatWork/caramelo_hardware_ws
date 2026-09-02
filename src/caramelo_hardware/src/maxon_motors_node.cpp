@@ -338,6 +338,10 @@ bool MaxonMotorsNode::initialize(
 	health_.store(static_cast<int>(Health::Ok), std::memory_order_relaxed);
 
 	last_update_time_ = now();
+	partida_ns_ = steady_now_ns();
+	guarda_rearme_ns_ = 0;
+	guarda_tentativas_ = 0;
+	guarda_ativa_ = true;
 	last_cycle_ns_.store(steady_now_ns());
 	initialized_.store(true, std::memory_order_release);
 
@@ -748,6 +752,89 @@ void MaxonMotorsNode::sampler_loop()
 #endif
 }
 
+
+void MaxonMotorsNode::guarda_de_partida()
+{
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// POR QUE ESTA GUARDA EXISTE
+	//
+	// Iniciar o trem de pulsos exige chamar lgTxServo, e essa chamada cancela e
+	// reinicia o trem: caindo dentro do pulso alto ela trunca o Ton, e pulso
+	// truncado cai na banda de RE do firmware. Medido em dezenas de subidas com
+	// as rodas suspensas: os logs das subidas que disparam sao IDENTICOS aos das
+	// limpas — mesmas 4 reprogramacoes, mesmo verificador, nenhum failsafe. O
+	// software faz exatamente a mesma coisa toda vez; a variavel e' a fase
+	// interna do transmissor da lgpio quando o processo arranca, que nao esta
+	// sob nosso controle. E as rodas afetadas sao sempre um PAR de offset
+	// ({0,10} ms ou {5,15} ms), as duas fases separadas por meio periodo.
+	//
+	// Nao da' para evitar o disparo pela temporizacao. Da' para garantir que ele
+	// nao SOBREVIVA: aqui a roda girando com pulso neutro e' detectada e os
+	// pulsos sao cortados (Ton=0 PARA o motor no firmware novo, e cortar nao tem
+	// o risco de truncar que reprogramar tem).
+	//
+	// A guarda vale so' nos primeiros segundos: depois disso, roda girando sem
+	// comando e' o robo sendo ARRASTADO A MAO, que e' caso de uso legitimo.
+	const int64_t agora = steady_now_ns();
+	if (!guarda_ativa_) {
+		return;
+	}
+
+	// Re-arme pendente de uma deteccao anterior.
+	if (guarda_rearme_ns_ != 0) {
+		if (agora < guarda_rearme_ns_) {
+			return;
+		}
+		guarda_rearme_ns_ = 0;
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			send_servo_pulse(i, neutral_pulse_width_us(), true);
+		}
+		RCLCPP_WARN(get_logger(), "GUARDA DE PARTIDA: re-armado (tentativa %d).",
+			guarda_tentativas_);
+		return;
+	}
+
+	if (agora - partida_ns_ > 25000000000LL) {   // 25 s cobrem toda a subida
+		guarda_ativa_ = false;
+		RCLCPP_INFO(get_logger(), "GUARDA DE PARTIDA: janela encerrada, robo estavel.");
+		return;
+	}
+
+	for (std::size_t i = 0; i < motors_.size(); ++i) {
+		const bool neutro =
+			motors_[i].last_pulse_us.load(std::memory_order_relaxed) == neutral_pulse_width_us();
+		const double v = motors_[i].velocity_rad_s.load();
+		if (!neutro || std::fabs(v) < 0.5) {
+			continue;
+		}
+		// Disparo: pulso neutro e roda girando acima do ruido.
+		++guarda_tentativas_;
+		RCLCPP_FATAL(
+			get_logger(),
+			"GUARDA DE PARTIDA: roda %zu (GPIO %d) girando a %.2f rad/s com pulso NEUTRO. "
+			"Cortando os pulsos das 4 rodas.",
+			i, motors_[i].config.pwm_gpio, v);
+		for (std::size_t k = 0; k < motors_.size(); ++k) {
+			lgTxServo(
+				chip_handle_.load(), motors_[k].config.pwm_gpio, 0,
+				kServoFrequencyHz, servo_offset_us(k), 0);
+			motors_[k].last_pulse_us.store(-1, std::memory_order_relaxed);
+		}
+		if (guarda_tentativas_ >= 4) {
+			guarda_ativa_ = false;
+			health_.store(static_cast<int>(Health::Morto), std::memory_order_relaxed);
+			RCLCPP_FATAL(
+				get_logger(),
+				"GUARDA DE PARTIDA: 4 disparos seguidos. Deixando os pulsos CORTADOS e "
+				"marcando o driver como morto — melhor um robo parado que um solto.");
+			return;
+		}
+		guarda_rearme_ns_ = agora + 800000000LL;   // 800 ms com o motor parado
+		return;
+	}
+#endif
+}
+
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
@@ -818,6 +905,8 @@ void MaxonMotorsNode::update_cycle()
 		last_snap_ = snap;
 		have_last_snap_ = true;
 	}
+
+	guarda_de_partida();
 
 	last_cycle_ns_.store(now_ns, std::memory_order_relaxed);
 	publicar_diagnostico = (++diag_divisor_ % 5) == 0;
