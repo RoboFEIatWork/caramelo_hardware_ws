@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 #include <pthread.h>
 #include <sched.h>
@@ -187,8 +188,24 @@ bool MaxonMotorsNode::initialize(
 			return false;
 		}
 
-		// A leitura do encoder NAO passa mais pelo lgpio: e' amostragem direta
-		// do RIO do RP1 (ver sampler_loop). O lgpio fica so' com o PWM.
+		// Espaca o INICIO de cada trem de pulsos em mais de um periodo de 20 ms.
+		//
+		// MEDIDO em 2026-09-02: subindo o bringup com as rodas suspensas, rodas
+		// giravam SOZINHAS ate 0,86 volta durante a inicializacao, sem nenhum
+		// comando (os logs mostram apenas 1500 us). O padrao delatou a causa: as
+		// rodas que se moviam eram sempre os indices PARES ou sempre os IMPARES,
+		// que e' exatamente como os offsets escalonados (indice x 5 ms) se
+		// agrupam dentro do periodo de 20 ms — pares em 0/10 ms, impares em
+		// 5/15 ms, meio periodo de diferenca.
+		//
+		// Iniciando os quatro canais em sequencia rapida, o PRIMEIRO pulso de
+		// parte deles sai truncado ou esticado, dependendo de onde a chamada cai
+		// na fase do periodo. Um pulso fora da banda neutra e' um comando de
+		// aceleracao para o ESC — e no chao isso e' o robo saindo andando.
+		//
+		// Esperar um periodo inteiro entre os inicios faz cada canal comecar com
+		// a fase limpa, sem interagir com o anterior.
+		std::this_thread::sleep_for(std::chrono::milliseconds(25));
 		}
 
 	// Amostragem do encoder: mapeia o RIO do RP1 e configura as 8 linhas como
