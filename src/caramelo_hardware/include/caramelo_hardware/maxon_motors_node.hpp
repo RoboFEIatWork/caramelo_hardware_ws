@@ -282,6 +282,9 @@ private:
 	// com chrt -f 50.
 	std_msgs::msg::Float64MultiArray diag_msg_;
 	int diag_divisor_ = 0;
+	// Rastro do mapa comando -> pulso (so' diagnostico; tocado pela thread de controle).
+	int diag_pulse_[4] = {0, 0, 0, 0};
+	double diag_cmd_[4] = {0.0, 0.0, 0.0, 0.0};
 
 	double rad_per_count_ = 0.0;
 	// Lidos pela thread de failsafe (que de proposito NAO pega o mutex) e pela

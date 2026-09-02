@@ -663,19 +663,11 @@ void MaxonMotorsNode::update_cycle()
 			cmd_signed, motor.moving.load(std::memory_order_relaxed),
 			static_cast<int>(std::lround(motor.config.pulse_offset_us)));
 		motor.moving.store(pulse_us != neutral_pulse_width_us(), std::memory_order_relaxed);
-		// Rastro do mapa comando -> pulso, 1 Hz, so' com comando ativo. Sem isto
-		// a unica forma de saber qual RAMO (frente ou re) cada roda esta usando
-		// e' deduzir da cadeia command_sign/feedback_sign — e deduzir errado ja
-		// custou uma tentativa de calibracao inteira.
-		if (pulse_us != neutral_pulse_width_us()) {
-			RCLCPP_INFO_THROTTLE(
-				get_logger(), *get_clock(), 1000,
-				"motor %zu GPIO%d: cmd=%+.3f rad/s  command_sign=%+.0f  cmd_signed=%+.3f  "
-				"ramo=%s  pulso=%d us",
-				i, motor.config.pwm_gpio, motor.command_rad_s.load(),
-				motor.config.command_sign, cmd_signed,
-				(cmd_signed > 0.0) ? "FRENTE" : "RE", pulse_us);
-		}
+		// Guarda o pulso desta roda para o rastro consolidado (abaixo do laco):
+		// logar dentro do laco com THROTTLE colapsa as quatro rodas numa mensagem
+		// so', porque o throttle e' por ponto de chamada, nao por roda.
+		diag_pulse_[i] = pulse_us;
+		diag_cmd_[i] = cmd_signed;
 		send_servo_pulse(i, pulse_us, false);
 	}
 
@@ -686,6 +678,19 @@ void MaxonMotorsNode::update_cycle()
 
 	last_cycle_ns_.store(now_ns, std::memory_order_relaxed);
 	publicar_diagnostico = (++diag_divisor_ % 5) == 0;
+
+	// Rastro consolidado do mapa comando -> pulso, 1 Hz, so' com algum comando
+	// ativo. Mostra as QUATRO rodas na mesma linha, para dar para comparar os
+	// ramos de uma vez.
+	if (!command_stale) {
+		RCLCPP_INFO_THROTTLE(
+			get_logger(), *get_clock(), 1000,
+			"pulsos: m0/GPIO%d %s %dus | m1/GPIO%d %s %dus | m2/GPIO%d %s %dus | m3/GPIO%d %s %dus",
+			motors_[0].config.pwm_gpio, diag_cmd_[0] > 0 ? "FRENTE" : "RE___", diag_pulse_[0],
+			motors_[1].config.pwm_gpio, diag_cmd_[1] > 0 ? "FRENTE" : "RE___", diag_pulse_[1],
+			motors_[2].config.pwm_gpio, diag_cmd_[2] > 0 ? "FRENTE" : "RE___", diag_pulse_[2],
+			motors_[3].config.pwm_gpio, diag_cmd_[3] > 0 ? "FRENTE" : "RE___", diag_pulse_[3]);
+	}
 	}  // solta o lock ANTES de publicar
 
 	// Publicacao decimada para 20 Hz e fora do lock. Antes: a 100 Hz, com a
