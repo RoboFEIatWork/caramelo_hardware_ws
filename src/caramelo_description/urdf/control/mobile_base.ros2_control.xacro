@@ -30,7 +30,7 @@
                      ramo de FRENTE rodava ~8% abaixo do mapa (re batia exato)
                      -> guinada de ~23 graus em 3,4m. Deficit ~7,3us -> 8.
                      Recalibrar com o mesmo teste se trocar ESC/firmware. -->
-                <param name="pulse_trim_forward_us">0.0</param>
+                <param name="pulse_trim_forward_us">5.0</param>
                 <param name="pulse_trim_reverse_us">0.0</param>
                 <!-- ENCODER (2026-09-01): quadratura x4 por amostragem do RIO do
                      RP1. 1024 ciclos por canal por volta de motor x gearbox 1:28
