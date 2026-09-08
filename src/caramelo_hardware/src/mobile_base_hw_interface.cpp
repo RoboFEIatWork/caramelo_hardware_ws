@@ -231,6 +231,13 @@ namespace mobile_base_hardware {
             // conter o sintoma. Ver maxon_motors_node.hpp.
             read_double_param("guarda_janela_s", driver_config_.guarda_janela_s);
             read_bool_param("guarda_corta", driver_config_.guarda_corta);
+            // Core e prioridade da thread que GERA os pulsos servo. Ver a nota
+            // longa em maxon_motors_node.hpp: com ela solta, uma rajada de rede
+            // no CPU0 estica o pulso neutro e o ESC entende como comando.
+            // Default = o core do amostrador (que e' o core isolado).
+            driver_config_.pwm_tx_cpu = driver_config_.sampler_cpu;
+            read_int_param("pwm_tx_cpu", driver_config_.pwm_tx_cpu);
+            read_int_param("pwm_tx_priority", driver_config_.pwm_tx_priority);
             // Gate de seguranca do failsafe. true = pode CORTAR os pulsos quando o
             // laco de controle morre; so' vale com o firmware novo dos ESCs, em que
             // Ton=0 PARA o motor. Com o firmware antigo, perda de PWM e' lida como

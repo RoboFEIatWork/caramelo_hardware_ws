@@ -157,6 +157,32 @@ struct MaxonDriverConfig
 	// cortar o pulso e' conter sintoma: enquanto a causa nao for achada, o dado
 	// de como o disparo evolui sem intervencao vale mais que a intervencao.
 	bool guarda_corta = true;
+	// Core e prioridade da thread de tx do lgpio — a que GERA os pulsos servo.
+	//
+	// POR QUE ISTO EXISTE (medido em 2026-09-08, robo no chao):
+	// Uma roda arrancou a 11,28 rad/s com 1500 us PROGRAMADOS e ZERO
+	// reprogramacoes no log. Pelo mapa do ESC (24,4 us por rad/s, ancora
+	// 1570 us = 2,43 rad/s), 11,28 rad/s corresponde a um pulso de ~1786 us:
+	// o neutro chegou ao ESC ESTICADO em ~286 us. Como nao houve reprogramacao,
+	// a distorcao nasceu DENTRO da geracao do pulso.
+	//
+	// O pulso e' gerado por SOFTWARE (a Pi 5 nao tem a DMA da pigpio, e o PWM de
+	// hardware do RP1 nao esta nos pinos desta PCB). Se a thread que abaixa a
+	// borda for atrasada, o pulso estica — e pulso esticado E' um comando de
+	// andar. Prioridade SCHED_FIFO nao basta: softirq preempta thread de tempo
+	// real, e nesta Pi TODAS as interrupcoes caem no CPU0 (medido: 7 milhoes na
+	// eth0 e 3,9 milhoes no xhci, zero nos outros cores).
+	//
+	// A defesa e' tirar a thread de perto das interrupcoes: prende-la no core
+	// ISOLADO (isolcpus), com prioridade ACIMA do amostrador de encoder que ja
+	// mora la. Ela precisa de poucos microssegundos a cada 5 ms; preempta o
+	// amostrador, faz a borda na hora e devolve o core. O amostrador perde
+	// ~0,1% das amostras, que o filtro de permanencia absorve.
+	//
+	// -1 = nao prender (comportamento anterior). Default: o mesmo core do
+	// amostrador, que e' o core isolado.
+	int pwm_tx_cpu = -1;
+	int pwm_tx_priority = 90;   // > sampler (80) > control_loop (50)
 };
 
 class MaxonMotorsNode : public rclcpp::Node

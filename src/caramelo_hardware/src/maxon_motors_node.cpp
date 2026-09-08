@@ -374,19 +374,45 @@ bool MaxonMotorsNode::initialize(
 				lgpio_tids_.size());
 			lgpio_tids_.clear();
 		} else if (driver_config_.control_rt_priority > 0) {
+			// Prioridade: pwm_tx_priority quando pedida (acima do amostrador),
+			// senao a mesma do laco de controle (comportamento anterior).
+			const int prio = (driver_config_.pwm_tx_cpu >= 0 &&
+				driver_config_.pwm_tx_priority > 0)
+				? driver_config_.pwm_tx_priority
+				: driver_config_.control_rt_priority;
 			sched_param sp{};
-			sp.sched_priority = driver_config_.control_rt_priority;
+			sp.sched_priority = prio;
 			for (const int tid : lgpio_tids_) {
+				// AFINIDADE PRIMEIRO, prioridade depois: assim a thread nunca chega
+				// a rodar em prioridade alta num core que recebe interrupcao.
+				if (driver_config_.pwm_tx_cpu >= 0) {
+					cpu_set_t set;
+					CPU_ZERO(&set);
+					CPU_SET(driver_config_.pwm_tx_cpu, &set);
+					if (::sched_setaffinity(tid, sizeof(set), &set) != 0) {
+						RCLCPP_WARN(
+							get_logger(),
+							"nao consegui prender a thread %d do lgpio no core %d (%s). "
+							"Ela segue em qualquer core — inclusive o que recebe as "
+							"interrupcoes, onde o pulso ESTICA sob rajada de rede.",
+							tid, driver_config_.pwm_tx_cpu, std::strerror(errno));
+					} else {
+						RCLCPP_INFO(
+							get_logger(),
+							"thread %d do lgpio (tx dos pulsos) presa no core %d.",
+							tid, driver_config_.pwm_tx_cpu);
+					}
+				}
 				// sched_setscheduler aceita TID como pid na semantica do Linux.
 				if (::sched_setscheduler(tid, SCHED_FIFO, &sp) != 0) {
 					RCLCPP_WARN(
 						get_logger(),
 						"nao consegui por a thread %d do lgpio em SCHED_FIFO %d (%s).",
-						tid, driver_config_.control_rt_priority, std::strerror(errno));
+						tid, prio, std::strerror(errno));
 				} else {
 					RCLCPP_INFO(
 						get_logger(), "thread %d do lgpio (tx dos pulsos): SCHED_FIFO %d.",
-						tid, driver_config_.control_rt_priority);
+						tid, prio);
 				}
 			}
 			if (lgpio_tids_.empty()) {

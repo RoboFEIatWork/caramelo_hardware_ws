@@ -77,6 +77,21 @@
                      nao gera log nem se recupera.
                      Exige /etc/security/limits.d/99-realtime.conf (rtprio 98). -->
                 <param name="control_rt_priority">50</param>
+                <!-- THREAD QUE GERA OS PULSOS SERVO: presa no core ISOLADO, com
+                     prioridade ACIMA do amostrador de encoder (80).
+                     MEDIDO 2026-09-08, robo no chao: roda arrancou a 11,28 rad/s
+                     com 1500 us PROGRAMADOS e ZERO reprogramacoes no log. Pelo
+                     mapa do ESC isso corresponde a ~1786 us — o neutro chegou
+                     ESTICADO em ~286 us. Sem reprogramacao, a distorcao nasceu
+                     na GERACAO do pulso: a thread foi atrasada.
+                     Prioridade sozinha nao resolve, porque softirq preempta
+                     thread de tempo real, e nesta Pi TODAS as interrupcoes caem
+                     no CPU0 (7M na eth0, 3,9M no xhci, zero nos demais cores).
+                     A defesa e' tirar a thread do core das interrupcoes.
+                     -1 = nao prender (comportamento anterior).
+                     Exige o core em isolcpus (ver tools/setup_pi.sh secao 5). -->
+                <param name="pwm_tx_cpu">3</param>
+                <param name="pwm_tx_priority">90</param>
                 <!-- INSTRUMENTACAO do disparo de partida. Deixar FALSE em
                      operacao: os dois logs saem de dentro do laco de 100 Hz e
                      chamam get_clock() (mutex do rclcpp) + alocacao.
@@ -102,8 +117,16 @@
                      registra e NAO intervem, porque cortar contem o sintoma e o
                      que falta e' a causa.
                      PARA OPERACAO NORMAL: janela 25.0 e corta true. -->
+                <!-- janela 0 = vigia SEMPRE (a premissa de "fenomeno de partida"
+                     caiu em 2026-09-08: disparos a 371 s e 590 s da init).
+                     corta = true: com o robo no chao e disparo medido em
+                     11,28 rad/s, o corte fica LIGADO. A contagem de deteccoes no
+                     log continua servindo de medida de eficacia da correcao do
+                     pwm_tx_cpu — se a correcao funcionar, nao ha o que cortar.
+                     Para diagnosticar sem intervencao (rodas suspensas), use
+                     guarda_corta=false. -->
                 <param name="guarda_janela_s">0.0</param>
-                <param name="guarda_corta">false</param>
+                <param name="guarda_corta">true</param>
             </xacro:unless>
         </hardware>
 
