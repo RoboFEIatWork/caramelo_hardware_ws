@@ -142,6 +142,21 @@ struct MaxonDriverConfig
 	// Rastro consolidado comando -> pulso das 4 rodas, 1 Hz, SO enquanto alguma
 	// roda esta fora do neutro.
 	bool log_pulse_trace = false;
+	// Janela da guarda de partida, em segundos. 0 = SEM janela (vigia para
+	// sempre). O default de 25 s vem da premissa de que disparo de roda e'
+	// fenomeno DE PARTIDA — premissa que caiu em 2026-09-08, quando uma roda
+	// arrancou a 3,09 rad/s sozinha 220 s apos a inicializacao, com ZERO
+	// comandos no sistema inteiro (gravacao de 251 s: nenhuma mensagem em
+	// /cmd_vel, /cmd_vel_nav, /cmd_vel_smoothed, cmd_vel_unstamped nem
+	// /mecanum_controller/reference).
+	double guarda_janela_s = 25.0;
+	// A guarda CORTA os pulsos ao detectar, ou apenas OBSERVA e registra?
+	//
+	// false = modo diagnostico: detecta, loga com precisao (qual roda, que
+	// velocidade, que pulso estava programado) e NAO intervem. Existe porque
+	// cortar o pulso e' conter sintoma: enquanto a causa nao for achada, o dado
+	// de como o disparo evolui sem intervencao vale mais que a intervencao.
+	bool guarda_corta = true;
 };
 
 class MaxonMotorsNode : public rclcpp::Node

@@ -931,7 +931,12 @@ void MaxonMotorsNode::guarda_de_partida()
 		return;
 	}
 
-	if (agora - partida_ns_ > 25000000000LL) {   // 25 s cobrem toda a subida
+	// Janela configuravel; 0 = vigia para SEMPRE. A premissa de "isto e'
+	// fenomeno de partida" caiu em 2026-09-08 (disparo 220 s apos a init).
+	if (driver_config_.guarda_janela_s > 0.0 &&
+		agora - partida_ns_ >
+			static_cast<int64_t>(driver_config_.guarda_janela_s * 1e9))
+	{
 		guarda_ativa_ = false;
 		RCLCPP_INFO(get_logger(), "GUARDA DE PARTIDA: janela encerrada, robo estavel.");
 		return;
@@ -948,6 +953,23 @@ void MaxonMotorsNode::guarda_de_partida()
 			continue;
 		}
 		// Disparo: pulso neutro e roda girando acima do ruido.
+		//
+		// MODO OBSERVACAO (guarda_corta = false): registra e NAO intervem. E' o
+		// modo de diagnostico — cortar o pulso contem o sintoma, e enquanto a
+		// causa nao for achada o dado de como o disparo EVOLUI sozinho vale mais
+		// que a intervencao. O throttle evita encher o log durante um giro longo.
+		if (!driver_config_.guarda_corta) {
+			RCLCPP_ERROR_THROTTLE(
+				get_logger(), *get_clock(), 200,
+				"DISPARO OBSERVADO: roda %zu (GPIO %d) a %.2f rad/s com pulso NEUTRO "
+				"(%d us programado). NAO intervindo (guarda_corta=false). "
+				"t=%.1f s apos a init.",
+				i, motors_[i].config.pwm_gpio, v,
+				motors_[i].last_pulse_us.load(std::memory_order_relaxed),
+				static_cast<double>(agora - partida_ns_) * 1e-9);
+			continue;
+		}
+
 		++guarda_tentativas_;
 		RCLCPP_FATAL(
 			get_logger(),

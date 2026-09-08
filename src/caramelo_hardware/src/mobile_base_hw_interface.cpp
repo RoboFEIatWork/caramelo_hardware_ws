@@ -226,6 +226,11 @@ namespace mobile_base_hardware {
             // default, religavel sem recompilar quando o problema voltar.
             read_bool_param("log_pwm_reprogram", driver_config_.log_pwm_reprogram);
             read_bool_param("log_pulse_trace", driver_config_.log_pulse_trace);
+            // Guarda de partida: janela (0 = para sempre) e se ela CORTA ou so
+            // OBSERVA. O modo observacao existe para diagnosticar o disparo sem
+            // conter o sintoma. Ver maxon_motors_node.hpp.
+            read_double_param("guarda_janela_s", driver_config_.guarda_janela_s);
+            read_bool_param("guarda_corta", driver_config_.guarda_corta);
             // Gate de seguranca do failsafe. true = pode CORTAR os pulsos quando o
             // laco de controle morre; so' vale com o firmware novo dos ESCs, em que
             // Ton=0 PARA o motor. Com o firmware antigo, perda de PWM e' lida como
