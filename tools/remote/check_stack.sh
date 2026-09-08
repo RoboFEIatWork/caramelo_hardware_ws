@@ -17,9 +17,28 @@ echo "===== /robot_description: Publisher count DEVE ser 1 ====="
 # nenhum erro, e ai "parametro novo do xacro nao faz efeito".
 timeout 20 ros2 topic info /robot_description -v 2>/dev/null | grep -i "publisher count"
 
-echo "===== prioridade do ros2_control_node (esperado SCHED_FIFO 50) ====="
+echo "===== tempo real: SO as threads de controle, nunca as de DDS ====="
 CM=$(pgrep -f ros2_control_node | head -1)
-[ -n "$CM" ] && chrt -p "$CM" 2>/dev/null
+# 2026-09-08: a thread PRINCIPAL agora e' SCHED_OTHER de proposito. Ate aqui o
+# launch subia o processo inteiro com "chrt -f 50" e as 35 threads viravam tempo
+# real, DDS incluso — o que fazia o EKF perder deadline (medido: 21 estouros em
+# 2 min, ate 152 ms num ciclo de 25 ms, com os cores 68% ociosos). O criterio
+# correto passou a ser POR THREAD:
+#   - algumas poucas em FF (control_loop, tx do lgpio, update do
+#     controller_manager, failsafe em 10, amostrador em 80);
+#   - NENHUMA thread "dds.*" em FF.
+if [ -n "$CM" ]; then
+	ps -L -o tid,cls,rtprio,psr,comm -p "$CM" 2>/dev/null | sed -n '1p;/FF/p'
+	DDS_RT=$(ps -L -o cls,comm -p "$CM" 2>/dev/null | awk '$1=="FF" && $2 ~ /^dds/ {n++} END{print n+0}')
+	if [ "$DDS_RT" -gt 0 ]; then
+		echo "  FALHA: $DDS_RT thread(s) de DDS em tempo real — o chrt do processo voltou?"
+	else
+		echo "  OK: nenhuma thread de DDS em tempo real"
+	fi
+	if ! ps -L -o cls,rtprio -p "$CM" 2>/dev/null | awk '$1=="FF" && $2==80 {f=1} END{exit !f}'; then
+		echo "  FALHA: amostrador do encoder NAO esta em SCHED_FIFO 80"
+	fi
+fi
 
 echo "===== taxas ====="
 echo "-- /joint_states (esperado ~100 Hz) --"

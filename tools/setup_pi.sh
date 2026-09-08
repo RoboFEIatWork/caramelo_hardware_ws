@@ -167,6 +167,46 @@ server 10.42.0.1 iburst prefer minpoll 4 maxpoll 6
 			MUDOU=$((MUDOU + 1))
 		fi
 	fi
+	# Os "pool" do Ubuntu comentados: na competicao nao ha internet, e o
+	# docs/relogio_chrony.md manda deixar o notebook como fonte UNICA para nao
+	# haver briga de selecao. Encontrado ATIVO em 2026-09-08 — a Pi tinha 4 pools
+	# alem do notebook.
+	if grep -q '^pool ' /etc/chrony/chrony.conf 2>/dev/null; then
+		drift "'pool' ativo no chrony.conf (o notebook deve ser a fonte unica)"
+		if [ "$APLICAR" = "1" ]; then
+			sudo -n sed -i 's/^pool /#pool /' /etc/chrony/chrony.conf
+			sudo -n systemctl restart chrony
+			MUDOU=$((MUDOU + 1))
+		fi
+	else
+		ok "pools do Ubuntu comentados (notebook e' a fonte unica)"
+	fi
+
+	# chrony-wait: a Pi NAO tem bateria de RTC e acorda com a hora do ultimo
+	# desligamento. Medido em 2026-09-08: o chronyd registrou "System clock wrong
+	# by 535917 seconds" e deu um STEP de 6,2 DIAS depois de alcancar o notebook.
+	# Se o bringup subir antes desse passo, os nos nascem com a hora errada e
+	# levam o salto EM VOO: stamps de /scan e /odom pulam, a TF extrapola e o
+	# Nav2 descarta mensagem em silencio. chrony-wait.service atrasa
+	# time-sync.target ate o relogio fechar, dando um alvo de ordenacao para
+	# qualquer unidade e um sinal para o run_bringup.sh.
+	if systemctl is-enabled chrony-wait >/dev/null 2>&1; then
+		ok "chrony-wait habilitado (nada roda antes do passo do relogio)"
+	else
+		drift "chrony-wait DESABILITADO: o bringup pode subir antes do step de relogio"
+		if [ "$APLICAR" = "1" ]; then
+			sudo -n systemctl enable chrony-wait >/dev/null 2>&1
+			MUDOU=$((MUDOU + 1))
+		fi
+	fi
+
+	# A fonte selecionada tem que ser o notebook (^*), nao um pool da internet.
+	if chronyc -n sources 2>/dev/null | grep -q '^\^\*.*10\.42\.0\.1'; then
+		ok "fonte selecionada = 10.42.0.1 (notebook)"
+	else
+		drift "a fonte selecionada NAO e' 10.42.0.1: $(chronyc -n sources 2>/dev/null | awk '/^\^\*/{print $2}')"
+	fi
+
 	# Um drop-in de bancada sobrevivente e' erro: ele mente que a hora esta boa.
 	if ls /etc/chrony/conf.d/zz-bancada-*.conf >/dev/null 2>&1; then
 		manual "drop-in de BANCADA ainda instalado: $(ls /etc/chrony/conf.d/zz-bancada-*.conf) — remover antes da missao"
