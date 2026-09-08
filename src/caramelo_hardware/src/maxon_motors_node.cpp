@@ -8,8 +8,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <thread>
 
+#include <dirent.h>
 #include <pthread.h>
 #include <sched.h>
 
@@ -47,6 +49,48 @@ int64_t steady_now_ns()
 }
 
 }  // namespace
+
+std::vector<int> MaxonMotorsNode::tids_do_processo()
+{
+	// Le /proc/self/task. E' a UNICA forma de achar a thread que o lgpio cria
+	// para gerar os trens de pulso: a biblioteca nao devolve handle, nao nomeia
+	// a thread e nao tem API de prioridade.
+	std::vector<int> tids;
+	DIR * d = ::opendir("/proc/self/task");
+	if (d == nullptr) {
+		return tids;
+	}
+	while (const dirent * e = ::readdir(d)) {
+		const int tid = std::atoi(e->d_name);
+		if (tid > 0) {
+			tids.push_back(tid);
+		}
+	}
+	::closedir(d);
+	std::sort(tids.begin(), tids.end());
+	return tids;
+}
+
+void MaxonMotorsNode::aplicar_prioridade_rt(const char * quem)
+{
+	const int prio = driver_config_.control_rt_priority;
+	if (prio <= 0) {
+		return;
+	}
+	sched_param sp{};
+	sp.sched_priority = prio;
+	if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+		RCLCPP_WARN(
+			get_logger(),
+			"%s: sem permissao para SCHED_FIFO %d; seguindo em prioridade normal. "
+			"Os pulsos servo podem ESTICAR sob carga (medido em 2026-07: o ramo de "
+			"frente acelerava ~2x). Confira /etc/security/limits.d/99-realtime.conf "
+			"(ver docs/raspberry_tempo_real.md).",
+			quem, prio);
+		return;
+	}
+	RCLCPP_INFO(get_logger(), "%s: SCHED_FIFO %d.", quem, prio);
+}
 
 MaxonMotorsNode::MaxonMotorsNode()
 : Node("maxon_motors_node")
@@ -162,6 +206,11 @@ bool MaxonMotorsNode::initialize(
 	rad_per_count_ = kTwoPi / counts_per_rev;
 
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// Threads existentes ANTES de qualquer chamada ao lgpio. A diferenca depois
+	// da inicializacao e' exatamente o que a biblioteca criou (ver o bloco
+	// "TEMPO REAL SO PARA QUEM PRECISA", mais abaixo).
+	const std::vector<int> tids_antes = tids_do_processo();
+
 	// Abre o gpiochip do header de 40 pinos. Na Pi 5 as linhas ficam no RP1
 	// (label "pinctrl-rp1"; o NUMERO muda com o kernel). -1 = varre pelos
 	// labels; numero explicito no URDF (<param name="gpiochip_device">) pula
@@ -291,6 +340,65 @@ bool MaxonMotorsNode::initialize(
 		std::this_thread::sleep_for(std::chrono::milliseconds(25));
 		}
 
+	// TEMPO REAL SO PARA QUEM PRECISA.
+	//
+	// O lgpio gera os trens de pulso servo por SOFTWARE, numa thread propria que
+	// ele cria internamente. Se essa thread for preemptada, o pulso ESTICA — e
+	// pulso esticado e' comando de velocidade errado (medido em 27-29/07: o ramo
+	// de frente acelerava ~2x sob carga). Era por isso que o launch subia o
+	// processo inteiro com "chrt -f 50".
+	//
+	// O problema e' que "o processo inteiro" inclui as nove threads de DDS, que
+	// passavam a preemptar o EKF e o resto do sistema em prioridade de tempo
+	// real. Aqui elevamos so' as threads do lgpio, achadas por diferenca de
+	// /proc/self/task, e o laco de controle (que sobe a si mesmo em
+	// control_loop). O DDS fica em prioridade normal, que e' onde ele deve estar.
+	{
+		const std::vector<int> tids_depois = tids_do_processo();
+		lgpio_tids_.clear();
+		std::set_difference(
+			tids_depois.begin(), tids_depois.end(),
+			tids_antes.begin(), tids_antes.end(),
+			std::back_inserter(lgpio_tids_));
+
+		// Teto de sanidade: esperamos 1, no maximo 2. Se apareceu mais que isso,
+		// alguma outra parte do processo criou thread na mesma janela e nao da'
+		// para saber qual e' qual — nesse caso NAO elevamos nada e dizemos por
+		// que, em vez de promover uma thread aleatoria a tempo real.
+		if (lgpio_tids_.size() > 2) {
+			RCLCPP_WARN(
+				get_logger(),
+				"%zu threads novas durante a init do lgpio (esperado 1-2); nao da' "
+				"para distinguir a thread de tx. NENHUMA foi elevada a tempo real — "
+				"os pulsos podem esticar sob carga.",
+				lgpio_tids_.size());
+			lgpio_tids_.clear();
+		} else if (driver_config_.control_rt_priority > 0) {
+			sched_param sp{};
+			sp.sched_priority = driver_config_.control_rt_priority;
+			for (const int tid : lgpio_tids_) {
+				// sched_setscheduler aceita TID como pid na semantica do Linux.
+				if (::sched_setscheduler(tid, SCHED_FIFO, &sp) != 0) {
+					RCLCPP_WARN(
+						get_logger(),
+						"nao consegui por a thread %d do lgpio em SCHED_FIFO %d (%s).",
+						tid, driver_config_.control_rt_priority, std::strerror(errno));
+				} else {
+					RCLCPP_INFO(
+						get_logger(), "thread %d do lgpio (tx dos pulsos): SCHED_FIFO %d.",
+						tid, driver_config_.control_rt_priority);
+				}
+			}
+			if (lgpio_tids_.empty()) {
+				RCLCPP_WARN(
+					get_logger(),
+					"o lgpio nao criou thread nova na inicializacao. Se os pulsos "
+					"esticarem sob carga, a thread de tx nasce depois e precisa ser "
+					"elevada em outro ponto.");
+			}
+		}
+	}
+
 	// Amostragem do encoder: mapeia o RIO do RP1 e configura as 8 linhas como
 	// entrada com pull-up e Schmitt. Isso NAO usa lgpio — e' MMIO direto, e por
 	// isso convive com o lgpio segurando as linhas de PWM.
@@ -342,6 +450,7 @@ bool MaxonMotorsNode::initialize(
 	guarda_rearme_ns_ = 0;
 	guarda_tentativas_ = 0;
 	guarda_ativa_ = true;
+	pulsos_cortados_ = false;
 	last_cycle_ns_.store(steady_now_ns());
 	initialized_.store(true, std::memory_order_release);
 
@@ -467,12 +576,18 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 		return true;
 	}
 	// Toda reprogramacao e' um evento de RISCO (pode truncar o Ton e virar re),
-	// entao nenhuma pode acontecer sem rastro. Sem isto, uma chamada vinda de um
-	// caminho inesperado e' invisivel.
-	RCLCPP_INFO(
-		get_logger(), "lgTxServo REPROGRAMA GPIO%d: %d -> %d us (force=%d)",
-		motor.config.pwm_gpio, motor.last_pulse_us.load(std::memory_order_relaxed),
-		pulse_us, force ? 1 : 0);
+	// entao nenhuma pode acontecer sem rastro — mas o rastro fica atras de um
+	// parametro (log_pwm_reprogram), e nao ligado o tempo todo. Este RCLCPP_INFO
+	// sai de dentro do hw_mutex_, na thread do laco de 100 Hz: ele chama
+	// get_clock() (mutex interno do rclcpp) e aloca no caminho de formatacao.
+	// Foi decisivo para achar o disparo de partida e continua disponivel, mas em
+	// operacao normal ele so' adiciona latencia ao caminho critico.
+	if (driver_config_.log_pwm_reprogram) {
+		RCLCPP_INFO(
+			get_logger(), "lgTxServo REPROGRAMA GPIO%d: %d -> %d us (force=%d)",
+			motor.config.pwm_gpio, motor.last_pulse_us.load(std::memory_order_relaxed),
+			pulse_us, force ? 1 : 0);
+	}
 	const int rc = lgTxServo(
 		chip_handle_.load(), motor.config.pwm_gpio, pulse_us,
 		kServoFrequencyHz, servo_offset_us(motor_index), 0);
@@ -513,6 +628,17 @@ void MaxonMotorsNode::stop_all_motors_locked()
 		return;
 	}
 
+	if (pulsos_cortados_) {
+		// Pulsos cortados pela guarda: cortado JA e' o estado parado, e mais
+		// seguro que neutro (Ton=0 para o motor no firmware novo). Reprogramar
+		// aqui re-armaria os ESCs que a guarda acabou de desarmar.
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			motors_[i].command_rad_s.store(0.0);
+			motors_[i].moving.store(false, std::memory_order_relaxed);
+		}
+		return;
+	}
+
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		motors_[i].command_rad_s.store(0.0);
 		motors_[i].moving.store(false, std::memory_order_relaxed);
@@ -534,6 +660,12 @@ void MaxonMotorsNode::stop_all_motors_locked()
 void MaxonMotorsNode::control_loop()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// Este laco fala com o GPIO a 100 Hz e nao pode ficar esperando o
+	// escalonador. Ate 2026-09-08 ele herdava tempo real do "chrt -f 50" que o
+	// launch aplicava ao processo inteiro; agora sobe a si mesmo, para que o
+	// resto do processo (DDS acima de tudo) NAO suba junto.
+	aplicar_prioridade_rt("control_loop");
+
 	// Relogio ABSOLUTO (sleep_until): o sleep_for antigo derivava com a carga
 	// e o periodo real do ciclo esticava sob CPU alta.
 	auto next_wake = std::chrono::steady_clock::now();
@@ -786,8 +918,13 @@ void MaxonMotorsNode::guarda_de_partida()
 			return;
 		}
 		guarda_rearme_ns_ = 0;
+		pulsos_cortados_ = false;
 		for (std::size_t i = 0; i < motors_.size(); ++i) {
 			send_servo_pulse(i, neutral_pulse_width_us(), true);
+			// Mesmo espacamento de 25 ms da inicializacao: re-armar os quatro
+			// canais em rajada e' o evento que dispara a roda, e re-armar depois
+			// de um disparo era exatamente onde a rajada acontecia.
+			std::this_thread::sleep_for(std::chrono::milliseconds(25));
 		}
 		RCLCPP_WARN(get_logger(), "GUARDA DE PARTIDA: re-armado (tentativa %d).",
 			guarda_tentativas_);
@@ -823,6 +960,10 @@ void MaxonMotorsNode::guarda_de_partida()
 				kServoFrequencyHz, servo_offset_us(k), 0);
 			motors_[k].last_pulse_us.store(-1, std::memory_order_relaxed);
 		}
+		// Segura o corte: sem isto o update_cycle reprogramava tudo de volta
+		// para neutro no ciclo seguinte (10 ms), e o ESC nunca chegava a
+		// desarmar.
+		pulsos_cortados_ = true;
 		if (guarda_tentativas_ >= 4) {
 			guarda_ativa_ = false;
 			health_.store(static_cast<int>(Health::Morto), std::memory_order_relaxed);
@@ -846,6 +987,7 @@ void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	bool publicar_diagnostico = false;
+	bool publicar_rastro = false;
 	{
 	std::lock_guard<std::mutex> lock(hw_mutex_);
 
@@ -880,6 +1022,7 @@ void MaxonMotorsNode::update_cycle()
 		((now_ns - last_cmd_ns) >
 			static_cast<int64_t>(driver_config_.command_timeout_s * 1e9));
 
+	bool alguma_roda_ativa = false;
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		auto & motor = motors_[i];
 		if (tem_snap && have_last_snap_) {
@@ -905,7 +1048,25 @@ void MaxonMotorsNode::update_cycle()
 		// so', porque o throttle e' por ponto de chamada, nao por roda.
 		diag_pulse_[i] = pulse_us;
 		diag_cmd_[i] = cmd_signed;
-		send_servo_pulse(i, pulse_us, false);
+		// NAO reprograma enquanto a guarda de partida esta com os pulsos
+		// CORTADOS esperando o ESC desarmar.
+		//
+		// BUG CORRIGIDO EM 2026-09-08: este send era incondicional. A guarda
+		// cortava os pulsos (Ton=0) e marcava last_pulse_us = -1 para segurar o
+		// corte por 1,5 s — o tempo que o firmware leva para parar o motor
+		// (TURNOFF_TIME_MAX ~500 ms). Mas guarda_rearme_ns_ so' bloqueava a
+		// PROPRIA guarda: 10 ms depois este laco via last_pulse_us == -1 !=
+		// neutro e reprogramava os quatro canais de volta para neutro. O corte
+		// durava um ciclo em vez de 1500, e a recuperacao ainda saia como uma
+		// RAJADA de quatro reprogramacoes sem espacamento — que e' exatamente o
+		// evento que dispara a roda. A guarda estava alimentando o problema que
+		// existe para conter.
+		if (!pulsos_cortados_) {
+			send_servo_pulse(i, pulse_us, false);
+		}
+		if (pulse_us != neutral_pulse_width_us()) {
+			alguma_roda_ativa = true;
+		}
 	}
 
 	if (tem_snap) {
@@ -918,18 +1079,7 @@ void MaxonMotorsNode::update_cycle()
 	last_cycle_ns_.store(now_ns, std::memory_order_relaxed);
 	publicar_diagnostico = (++diag_divisor_ % 5) == 0;
 
-	// Rastro consolidado do mapa comando -> pulso, 1 Hz, so' com algum comando
-	// ativo. Mostra as QUATRO rodas na mesma linha, para dar para comparar os
-	// ramos de uma vez.
-	if (!command_stale) {
-		RCLCPP_INFO_THROTTLE(
-			get_logger(), *get_clock(), 1000,
-			"pulsos: m0/GPIO%d %s %dus | m1/GPIO%d %s %dus | m2/GPIO%d %s %dus | m3/GPIO%d %s %dus",
-			motors_[0].config.pwm_gpio, diag_cmd_[0] > 0 ? "FRENTE" : "RE___", diag_pulse_[0],
-			motors_[1].config.pwm_gpio, diag_cmd_[1] > 0 ? "FRENTE" : "RE___", diag_pulse_[1],
-			motors_[2].config.pwm_gpio, diag_cmd_[2] > 0 ? "FRENTE" : "RE___", diag_pulse_[2],
-			motors_[3].config.pwm_gpio, diag_cmd_[3] > 0 ? "FRENTE" : "RE___", diag_pulse_[3]);
-	}
+	publicar_rastro = driver_config_.log_pulse_trace && alguma_roda_ativa;
 	}  // solta o lock ANTES de publicar
 
 	// Publicacao decimada para 20 Hz e fora do lock. Antes: a 100 Hz, com a
@@ -939,6 +1089,33 @@ void MaxonMotorsNode::update_cycle()
 	// porque o topico e' ruidoso a 100 Hz: ninguem precisava daquela taxa.
 	if (publicar_diagnostico) {
 		velocity_pub_->publish(diag_msg_);
+	}
+
+	// Rastro consolidado do mapa comando -> pulso, 1 Hz. As QUATRO rodas na
+	// mesma linha, para dar para comparar os ramos de uma vez (um THROTTLE
+	// dentro do laco colapsaria as quatro numa mensagem so', porque o throttle
+	// e' por ponto de chamada, nao por roda).
+	//
+	// Duas correcoes de 2026-09-08:
+	//  - Fica atras de log_pulse_trace, e nao ligado o tempo todo.
+	//  - A condicao era "!command_stale", que NUNCA e' falsa: o write() do
+	//    ros2_control chama set_command_velocity() para as 4 juntas a 100 Hz
+	//    independente de haver comando, entao last_command_ns_ esta sempre
+	//    fresco. O gate pretendido ("so' com algum comando ativo") nunca fechava
+	//    e a linha saia a 1 Hz para sempre. Agora o gate e' o que ele dizia ser:
+	//    alguma roda fora do neutro.
+	//  - Sai FORA do hw_mutex_. Antes era emitido com o lock na mao, dentro do
+	//    laco de 100 Hz.
+	// diag_pulse_/diag_cmd_ so' sao tocados por esta thread, entao le-los depois
+	// de soltar o lock e' seguro.
+	if (publicar_rastro) {
+		RCLCPP_INFO_THROTTLE(
+			get_logger(), *get_clock(), 1000,
+			"pulsos: m0/GPIO%d %s %dus | m1/GPIO%d %s %dus | m2/GPIO%d %s %dus | m3/GPIO%d %s %dus",
+			motors_[0].config.pwm_gpio, diag_cmd_[0] > 0.0 ? "FRENTE" : "RE___", diag_pulse_[0],
+			motors_[1].config.pwm_gpio, diag_cmd_[1] > 0.0 ? "FRENTE" : "RE___", diag_pulse_[1],
+			motors_[2].config.pwm_gpio, diag_cmd_[2] > 0.0 ? "FRENTE" : "RE___", diag_pulse_[2],
+			motors_[3].config.pwm_gpio, diag_cmd_[3] > 0.0 ? "FRENTE" : "RE___", diag_pulse_[3]);
 	}
 #endif
 }

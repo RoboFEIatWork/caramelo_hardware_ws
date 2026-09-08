@@ -118,6 +118,15 @@ namespace mobile_base_hardware {
                             name, it->second.c_str(), target);
                     }
                 };
+            const auto read_bool_param =
+                [this](const char * name, bool & target) {
+                    const auto it = info_.hardware_parameters.find(name);
+                    if (it == info_.hardware_parameters.end()) {
+                        return;
+                    }
+                    const std::string & v = it->second;
+                    target = (v == "true" || v == "True" || v == "1");
+                };
             read_double_param("min_wheel_rad_per_sec", driver_config_.min_wheel_rad_per_sec);
             read_double_param("max_wheel_rad_per_sec", driver_config_.max_wheel_rad_per_sec);
             read_double_param("command_timeout_s", driver_config_.command_timeout_s);
@@ -139,6 +148,15 @@ namespace mobile_base_hardware {
                 "encoder_counts_per_wheel_rev", driver_config_.encoder_counts_per_wheel_rev);
             read_int_param("encoder_stable_samples", driver_config_.encoder_stable_samples);
             read_int_param("sampler_cpu", driver_config_.sampler_cpu);
+            // Prioridade de tempo real do laco de controle e da thread de tx do
+            // lgpio. 0 = nao elevar. Ate 2026-09-08 o launch subia o PROCESSO
+            // INTEIRO com "chrt -f 50" e as nove threads de DDS iam junto; ver
+            // maxon_motors_node.hpp para a medicao que motivou a mudanca.
+            read_int_param("control_rt_priority", driver_config_.control_rt_priority);
+            // Instrumentacao do disparo de partida: cara em log, desligada por
+            // default, religavel sem recompilar quando o problema voltar.
+            read_bool_param("log_pwm_reprogram", driver_config_.log_pwm_reprogram);
+            read_bool_param("log_pulse_trace", driver_config_.log_pulse_trace);
             // Gate de seguranca do failsafe. true = pode CORTAR os pulsos quando o
             // laco de controle morre; so' vale com o firmware novo dos ESCs, em que
             // Ton=0 PARA o motor. Com o firmware antigo, perda de PWM e' lida como

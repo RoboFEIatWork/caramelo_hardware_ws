@@ -63,6 +63,30 @@
                      uma Pi com ESC antigo nao pode herdar o comportamento novo
                      em silencio. -->
                 <param name="esc_failsafe_cut_pulses">true</param>
+                <!-- TEMPO REAL: prioridade SCHED_FIFO do laco de controle e da
+                     thread de tx do lgpio (que gera os pulsos servo por
+                     software). 0 = nao elevar.
+                     2026-09-08: ANTES o launch subia o ros2_control_node inteiro
+                     com "chrt -f 50" e as 35 threads viravam tempo real,
+                     inclusive as NOVE de DDS. Medido nesta bancada: com o stack
+                     do PC no ar, o ekf_node passou de 1 para 21 estouros de
+                     deadline em 2 min (ate 152 ms num ciclo de 25 ms) com os
+                     cores 0/1/2 68% OCIOSOS — preempcao, nao falta de CPU. Com
+                     sched_rt_runtime_us=-1 nao ha teto, e o detector de lockup
+                     deste kernel esta desabilitado: core tomado por thread RT
+                     nao gera log nem se recupera.
+                     Exige /etc/security/limits.d/99-realtime.conf (rtprio 98). -->
+                <param name="control_rt_priority">50</param>
+                <!-- INSTRUMENTACAO do disparo de partida. Deixar FALSE em
+                     operacao: os dois logs saem de dentro do laco de 100 Hz e
+                     chamam get_clock() (mutex do rclcpp) + alocacao.
+                     log_pwm_reprogram: uma linha por reprogramacao de lgTxServo
+                       (toda reprogramacao e' um evento de risco de truncar o Ton).
+                     log_pulse_trace: as 4 rodas numa linha, 1 Hz, so' enquanto
+                       alguma esta fora do neutro.
+                     Ligar os dois para cacar "roda gira sozinha na subida". -->
+                <param name="log_pwm_reprogram">false</param>
+                <param name="log_pulse_trace">false</param>
             </xacro:unless>
         </hardware>
 

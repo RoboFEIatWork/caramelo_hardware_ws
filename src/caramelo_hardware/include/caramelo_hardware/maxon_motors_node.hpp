@@ -115,6 +115,33 @@ struct MaxonDriverConfig
 	// MAXIMA — por isso isto e' um parametro e nao uma constante: uma Pi com ESC
 	// antigo nao pode herdar o comportamento novo em silencio.
 	bool esc_failsafe_cut_pulses = true;
+	// Prioridade SCHED_FIFO do laco de controle e da thread de tx do lgpio.
+	// 0 = nao elevar (fica em SCHED_OTHER).
+	//
+	// Ate 2026-09-08 isto nao existia: o launch subia o processo INTEIRO com
+	// "chrt -f 50", e o resultado era que as 35 threads do ros2_control_node
+	// viravam tempo real — inclusive as NOVE threads de DDS. Medido nesta
+	// bancada: com o stack do PC no ar, o ekf_node (prioridade normal, no mesmo
+	// core) passou de 1 para 21 estouros de deadline em 2 min, levando ate
+	// 152 ms num ciclo de 25 ms, com os cores 0/1/2 68% OCIOSOS. Nao era falta
+	// de CPU: era preempcao por thread de rede em prioridade de tempo real.
+	// Com kernel.sched_rt_runtime_us=-1 (que a bancada usa) nao ha teto para
+	// isso, e o detector de lockup esta desabilitado neste kernel — um core
+	// tomado por thread RT nao gera log nem se recupera.
+	//
+	// A justificativa original do chrt no launch citava "tx dos pulsos servo +
+	// alertas de encoder". Os alertas de encoder NAO existem mais (a leitura
+	// virou amostragem do RIO, com thread propria que ja define a sua
+	// prioridade), entao sobrou so' o tx do lgpio — que e' o que este parametro
+	// eleva, junto com o laco de controle, sem arrastar o DDS junto.
+	int control_rt_priority = 50;
+	// Rastro de TODA reprogramacao de lgTxServo (uma linha por evento).
+	// Instrumentacao de diagnostico do disparo de partida: cara em log e feita
+	// para ser ligada quando se esta cacando o problema, nao para viver ligada.
+	bool log_pwm_reprogram = false;
+	// Rastro consolidado comando -> pulso das 4 rodas, 1 Hz, SO enquanto alguma
+	// roda esta fora do neutro.
+	bool log_pulse_trace = false;
 };
 
 class MaxonMotorsNode : public rclcpp::Node
@@ -252,6 +279,11 @@ private:
 	/// girando com pulso NEUTRO e' disparo do ESC. Corta os pulsos e re-arma.
 	/// Roda dentro do update_cycle, entao nao bloqueia — e' maquina de estados.
 	void guarda_de_partida();
+	/// Eleva as threads que precisam de tempo real (o laco de controle e as do
+	/// lgpio), em vez de deixar o launch elevar o processo inteiro.
+	void aplicar_prioridade_rt(const char * quem);
+	/// Snapshot das TIDs deste processo, para descobrir o que o lgpio criou.
+	static std::vector<int> tids_do_processo();
 	void update_cycle();
 	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
 	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
@@ -289,6 +321,16 @@ private:
 	int64_t guarda_rearme_ns_ = 0;    ///< 0 = nao ha re-arme pendente
 	int guarda_tentativas_ = 0;
 	bool guarda_ativa_ = true;
+	/// Os pulsos estao CORTADOS (Ton=0) por decisao da guarda de partida.
+	/// Enquanto isto for true o laco de controle NAO pode reprogramar o canal:
+	/// o corte precisa durar mais que o TURNOFF_TIME_MAX do firmware (~500 ms)
+	/// para o ESC desarmar de verdade. Fica true para sempre se a guarda
+	/// desistir (4 disparos), que e' o estado "melhor parado que solto".
+	bool pulsos_cortados_ = false;
+	/// TIDs criadas pelo lgpio durante a inicializacao (a thread que gera os
+	/// trens de pulso). Descobertas por diferenca de /proc/self/task, porque o
+	/// lgpio nao expoe handle nem nome de thread.
+	std::vector<int> lgpio_tids_;
 	// Mensagem de diagnostico pre-dimensionada: publicar a 100 Hz alocando um
 	// Float64MultiArray por ciclo era ~100 malloc/s dentro da thread que roda
 	// com chrt -f 50.

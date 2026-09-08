@@ -53,14 +53,33 @@ def generate_launch_description():
     control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        # 2026-07-29: SCHED_FIFO no processo inteiro — as threads do lgpio (tx
-        # dos pulsos servo + alertas de encoder) herdam a politica e deixam de
-        # perder CPU p/ carga comum. Sem isso os pulsos ESTICAM sob carga
-        # (frente acelera ~2x, re desacelera; provado em bancada 27-29/07).
-        # Requer /etc/security/limits.d/99-realtime.conf (rtprio 98) + reboot —
-        # ver docs/raspberry_tempo_real.md. Se o chrt falhar (limite ausente),
-        # o launch quebra: rodar o doc primeiro.
-        prefix=["chrt -f 50"],
+        # SEM prefix de chrt (2026-09-08). O tempo real agora e' aplicado
+        # DENTRO do driver, so' nas threads que precisam: o laco de controle e a
+        # thread de tx do lgpio (ver <param name="control_rt_priority"> no
+        # mobile_base.ros2_control.xacro).
+        #
+        # POR QUE MUDOU: de 2026-07-29 ate aqui este launch subia o processo
+        # inteiro com "chrt -f 50". A intencao era proteger as threads do lgpio
+        # ("tx dos pulsos servo + alertas de encoder"), porque sem isso os pulsos
+        # ESTICAM sob carga (frente acelera ~2x; provado em bancada 27-29/07).
+        # Duas coisas mudaram desde entao:
+        #  1. Os "alertas de encoder" nao existem mais — a leitura virou
+        #     amostragem do RIO, com thread propria que ja define a sua
+        #     prioridade (SCHED_FIFO 80 no core isolado).
+        #  2. O prefix elevava as 35 threads do processo, inclusive as NOVE de
+        #     DDS. Medido em 2026-09-08 nesta bancada: com o stack do PC no ar, o
+        #     ekf_node (prioridade normal) passou de 1 para 21 estouros de
+        #     deadline em 2 min, ate 152 ms num ciclo de 25 ms, com os cores
+        #     0/1/2 68% OCIOSOS. Nao era falta de CPU: era preempcao por thread
+        #     de REDE em prioridade de tempo real. Com
+        #     kernel.sched_rt_runtime_us=-1 nao ha teto para isso, e o detector
+        #     de lockup deste kernel esta desabilitado ("Hard watchdog
+        #     permanently disabled") — um core tomado por thread RT nao gera log
+        #     nem se recupera, que e' a assinatura do "a Pi congela".
+        #
+        # Continua exigindo /etc/security/limits.d/99-realtime.conf (rtprio 98);
+        # a diferenca e' que agora, sem o limite, o driver AVISA e segue em
+        # prioridade normal em vez de o launch inteiro quebrar.
         parameters=[
             robot_controllers,
             {'use_sim_time': use_sim_time},
