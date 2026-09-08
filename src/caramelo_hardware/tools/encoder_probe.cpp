@@ -456,6 +456,11 @@ int mode_nudge(caramelo::Rp1Rio & rio, int pulse_us, double hold_s)
 ///
 /// Uma roda por vez; as outras tres ficam em neutro e sao observadas junto,
 /// para flagrar diafonia.
+// BUG DE BUILD CORRIGIDO EM 2026-09-08: esta funcao chama lgTxServo/g_chip, que
+// so' existem com CARAMELO_HAS_LGPIO. Ela nasceu (b16dfcd) FORA do #if — o
+// mode_nudge logo acima ja estava dentro — entao o build sem GPIO (o do PC de
+// desenvolvimento, -DCARAMELO_REQUIRE_LGPIO=OFF) nunca compilou desde entao.
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 int mode_pulse_sweep(
 	caramelo::Rp1Rio & rio, int alvo_roda, double dwell_s, double settle_s)
 {
@@ -533,6 +538,7 @@ int mode_pulse_sweep(
 		"rodas que NAO foram comandadas naquele ponto.\n");
 	return 0;
 }
+#endif  // CARAMELO_HAS_LGPIO
 
 void usage()
 {
@@ -638,7 +644,14 @@ int main(int argc, char ** argv)
 	// A cutucada vem ANTES do modo escolhido: ela destrava os eixos, entao um
 	// --count logo em seguida ja encontra as rodas livres para girar a mao.
 	if (do_nudge) { rc = mode_nudge(rio, nudge_us, nudge_s); }
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	if (do_sweep) { rc = mode_pulse_sweep(rio, roda, dwell, 1.5); }
+#else
+	if (do_sweep) {
+		std::fprintf(stderr, "--pulse-sweep exige o backend lgpio (build sem GPIO).\n");
+		rc = 2;
+	}
+#endif
 #endif
 	switch (mode) {
 		case Mode::Info: rc = mode_info(rio); break;
