@@ -100,7 +100,8 @@
                      log_pulse_trace: as 4 rodas numa linha, 1 Hz, so' enquanto
                        alguma esta fora do neutro.
                      Ligar os dois para cacar "roda gira sozinha na subida". -->
-                <!-- 2026-09-08: LIGADOS para a campanha de diagnostico do disparo
+                <!-- 2026-09-08: usados na campanha que achou a causa do disparo
+                     (ver pwm_tx_cpu abaixo) e DESLIGADOS de volta ao fim dela.
                      de roda. O log_pwm_reprogram e' o discriminador: se houver
                      reprogramacao no instante do giro, o problema e' truncamento
                      na hora de reprogramar; se NAO houver nenhuma e a roda girar
@@ -108,8 +109,8 @@
                      programado e a distorcao aconteceu DENTRO da geracao do
                      lgpio (pulso esticado por preempcao da thread de tx).
                      Voltar os dois para false depois da campanha. -->
-                <param name="log_pwm_reprogram">true</param>
-                <param name="log_pulse_trace">true</param>
+                <param name="log_pwm_reprogram">false</param>
+                <param name="log_pulse_trace">false</param>
                 <!-- GUARDA DE PARTIDA em MODO OBSERVACAO para a campanha:
                      janela 0 = vigia para sempre (a premissa de "fenomeno de
                      partida" caiu em 2026-09-08: disparo de 3,09 rad/s a 220 s
@@ -117,15 +118,20 @@
                      registra e NAO intervem, porque cortar contem o sintoma e o
                      que falta e' a causa.
                      PARA OPERACAO NORMAL: janela 25.0 e corta true. -->
-                <!-- janela 0 = vigia SEMPRE (a premissa de "fenomeno de partida"
-                     caiu em 2026-09-08: disparos a 371 s e 590 s da init).
-                     corta = true: com o robo no chao e disparo medido em
-                     11,28 rad/s, o corte fica LIGADO. A contagem de deteccoes no
-                     log continua servindo de medida de eficacia da correcao do
-                     pwm_tx_cpu — se a correcao funcionar, nao ha o que cortar.
-                     Para diagnosticar sem intervencao (rodas suspensas), use
-                     guarda_corta=false. -->
-                <param name="guarda_janela_s">0.0</param>
+                <!-- GUARDA DE PARTIDA — de volta ao comportamento ORIGINAL
+                     (janela de 25 s) depois de uma regressao minha em
+                     2026-09-08: com a janela em 0 ("vigia sempre") o limiar de
+                     0,25 rad/s passou a contar EMPURRAO COM A MAO como disparo.
+                     Quatro empurroes e a guarda desiste, marca o driver como
+                     MORTO e deixa os pulsos cortados — a base inteira para ate
+                     reiniciar o bringup. Aconteceu de verdade com o operador
+                     testando o teleop.
+                     Para vigiar durante toda a operacao seria preciso ANTES
+                     trocar o limiar: 0,25 rad/s esta ABAIXO do piso do ESC
+                     (2,43 rad/s), e abaixo do piso a placa nao consegue estar
+                     acionando o motor — logo e' empurrao externo, nao disparo.
+                     O limiar de operacao teria de ficar acima do piso. -->
+                <param name="guarda_janela_s">25.0</param>
                 <param name="guarda_corta">true</param>
             </xacro:unless>
         </hardware>
