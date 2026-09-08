@@ -58,8 +58,17 @@ for i in $(seq 1 "$N"); do
 	echo "--- avisos do driver na subida ---"
 	grep -iE "error|warn|nao-finito|FAILSAFE|MORTO" "$LOG" | grep -v "Timestamp in header" | head -4
 
-	echo "--- pulsos registrados durante a subida ---"
-	grep "pulsos:" "$LOG" | head -3
+	# ARME e GUARDA DE PARTIDA sao logados SEMPRE (nao dependem de
+	# log_pwm_reprogram/log_pulse_trace, que ficam desligados em operacao). Sao
+	# eles que dizem se houve disparo E se a mitigacao pegou:
+	#   "ARME ... girou X volta SEM COMANDO"  -> disparou antes de o driver subir
+	#   "GUARDA DE PARTIDA: roda ... NEUTRO"  -> disparou depois, e foi cortada
+	#   "GUARDA DE PARTIDA: janela encerrada" -> os 25 s passaram limpos
+	echo "--- arme e guarda de partida ---"
+	grep -E "ARME|GUARDA DE PARTIDA" "$LOG" | head -8
+
+	echo "--- pulsos registrados durante a subida (so' com log_pulse_trace) ---"
+	grep -E "pulsos:|REPROGRAMA" "$LOG" | head -3
 
 	sleep 2
 done

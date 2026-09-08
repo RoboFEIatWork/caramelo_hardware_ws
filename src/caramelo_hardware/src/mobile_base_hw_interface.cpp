@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
 #include <string>
 #include <utility>
 
@@ -48,6 +49,74 @@ namespace mobile_base_hardware {
         // usava.
         constexpr double kEncoderSign = -1.0;
     } // namespace
+
+    MobileBaseHWInterface::~MobileBaseHWInterface()
+    {
+        // Ordem OBRIGATORIA: primeiro a thread, depois o hardware.
+        //
+        // node_spin_thread_ e' declarado DEPOIS de driver_, entao o compilador o
+        // destroi ANTES. Se ele chegar joinable no ~thread, std::terminate()
+        // aborta o processo e ~MaxonMotorsNode nunca roda — o desligamento
+        // ordenado dos ESCs e o lgGpioFree ficam para tras. Fazer o trabalho
+        // aqui, no CORPO do destrutor (que executa antes da destruicao dos
+        // membros), e' o que garante os dois.
+        //
+        // Nada aqui pode lancar: excecao escapando de destrutor e' std::terminate
+        // do mesmo jeito.
+        try {
+            parar_spin();
+            soltar_driver();
+        } catch (const std::exception & e) {
+            RCLCPP_ERROR(get_logger(), "excecao no destrutor: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(get_logger(), "excecao desconhecida no destrutor.");
+        }
+    }
+
+    void MobileBaseHWInterface::parar_spin()
+    {
+        node_executor_.cancel();
+        if (node_spin_thread_.joinable()) {
+            node_spin_thread_.join();
+        }
+    }
+
+    void MobileBaseHWInterface::soltar_driver()
+    {
+        if (!driver_) {
+            return;
+        }
+        // shutdown_hardware() e' idempotente e faz o desligamento ORDENADO:
+        // neutro -> 120 ms no fio -> corta os pulsos -> libera as linhas.
+        driver_->shutdown_hardware();
+        node_executor_.remove_node(driver_);
+        driver_.reset();
+        have_last_snap_ = false;
+        was_healthy_ = false;
+    }
+
+    hardware_interface::CallbackReturn MobileBaseHWInterface::on_shutdown
+        (const rclcpp_lifecycle::State & previous_state)
+        {
+            (void)previous_state;
+            // Caminho normal de desligamento: solta tudo aqui, para o destrutor
+            // nao ter trabalho nenhum. Sem este override, sair de active ou
+            // inactive pulava direto para o destrutor.
+            parar_spin();
+            soltar_driver();
+            return hardware_interface::CallbackReturn::SUCCESS;
+        }
+
+    hardware_interface::CallbackReturn MobileBaseHWInterface::on_error
+        (const rclcpp_lifecycle::State & previous_state)
+        {
+            (void)previous_state;
+            // Mesmo tratamento do shutdown: um componente em erro que deixa a
+            // thread viva volta a abortar no destrutor.
+            parar_spin();
+            soltar_driver();
+            return hardware_interface::CallbackReturn::SUCCESS;
+        }
 
     // Esse seria o construtor da Classe.
     // Ele é necessário para criar o objeto do tipo MobileBaseHWInterface, que é o hardware interface do ros2_control.
@@ -246,6 +315,14 @@ namespace mobile_base_hardware {
         {
             (void)previous_state; // para evitar warning de variável não utilizada
 
+            // Defesa contra configure sem cleanup antes: sem isto, a thread de
+            // spin anterior continuaria viva girando um executor cujo node acabou
+            // de ser trocado, e o driver antigo seguiria com as linhas de GPIO na
+            // mao — o proximo initialize() falharia com "Device or resource busy"
+            // e o motivo nao apareceria em lugar nenhum.
+            parar_spin();
+            soltar_driver();
+
             // Aqui é onde você pode configurar o hardware e abrir comunicação.
             driver_ = std::make_shared<MaxonMotorsNode>();
             if (!driver_->initialize(driver_config_, motor_configs_)) {
@@ -336,18 +413,8 @@ namespace mobile_base_hardware {
         {
             (void)previous_state;
 
-            node_executor_.cancel();
-            if (node_spin_thread_.joinable()) {
-                node_spin_thread_.join();
-            }
-
-            if (driver_) {
-                driver_->shutdown_hardware();
-                node_executor_.remove_node(driver_);
-                driver_.reset();
-            }
-            have_last_snap_ = false;
-            was_healthy_ = false;
+            parar_spin();
+            soltar_driver();
 
             return hardware_interface::CallbackReturn::SUCCESS;
         }

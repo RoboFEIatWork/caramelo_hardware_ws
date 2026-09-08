@@ -17,6 +17,27 @@ namespace mobile_base_hardware {
     class MobileBaseHWInterface : public hardware_interface::SystemInterface {
         //Para qualquer sistema os metodos publicos sempre serao os mesmos a esse (pode copiar e colar)
         public:
+            // DESTRUTOR EXPLICITO — nao e' cosmetico.
+            //
+            // Sem ele, o ros2_control_node ABORTAVA no encerramento. Rastro
+            // capturado no bringup de 2026-09-08:
+            //   ControllerManager::~ControllerManager()
+            //     -> ResourceManager::~ResourceManager()
+            //       -> ~MobileBaseHWInterface -> ~thread -> std::__terminate
+            // O destrutor de std::thread chama std::terminate() se a thread ainda
+            // for JOINABLE, e node_spin_thread_ so' era joinada no on_cleanup —
+            // que nao roda quando o componente e' destruido a partir de active ou
+            // inactive.
+            //
+            // A consequencia grave nao e' o abort: e' que node_spin_thread_ e'
+            // declarado DEPOIS de driver_, logo destruido ANTES dele. O terminate
+            // disparava antes de ~MaxonMotorsNode, entao shutdown_hardware()
+            // NUNCA rodava — nada de neutro por 120 ms no fio, nada de cortar os
+            // pulsos, e sobretudo nada de lgGpioFree. E' a causa do problema
+            // conhecido "Ctrl-C nao mata os nos, ficam zumbis segurando GPIOs"
+            // (docs/raspberry_tempo_real.md).
+            ~MobileBaseHWInterface() override;
+
             // Lifecycle Nodes overrides 
             hardware_interface::CallbackReturn
                 on_configure(const rclcpp_lifecycle::State & previous_state) override;
@@ -29,6 +50,14 @@ namespace mobile_base_hardware {
 
             hardware_interface::CallbackReturn
                 on_cleanup(const rclcpp_lifecycle::State & previous_state) override;
+
+            // Caminho normal de desligamento do lifecycle. Sem este override, sair
+            // de active/inactive ia direto para o destrutor.
+            hardware_interface::CallbackReturn
+                on_shutdown(const rclcpp_lifecycle::State & previous_state) override;
+
+            hardware_interface::CallbackReturn
+                on_error(const rclcpp_lifecycle::State & previous_state) override;
 
 
             // System Interface overrides
@@ -44,6 +73,12 @@ namespace mobile_base_hardware {
                 write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
         private:
+            /// Encerra o executor e junta a thread de spin. Idempotente: chamada
+            /// pelo on_cleanup, pelo on_shutdown, pelo on_error e pelo destrutor.
+            void parar_spin();
+            /// Encerra o hardware e solta o driver. Idempotente.
+            void soltar_driver();
+
             // sharedpointer para o node/driver do motor, para que possa ser usado em todas as funções da classe
             std::shared_ptr<MaxonMotorsNode> driver_;
 
